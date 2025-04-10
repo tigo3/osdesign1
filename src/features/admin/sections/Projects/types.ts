@@ -1,15 +1,13 @@
-// Define the structure for a single project explicitly
-export interface Project { // Added export
+// Define the structure for a single project, matching the DB table
+export interface Project {
+  id?: string; // Optional ID, useful when passing around but not required for creation
   title: string;
-  description: string;
-  tags: string[];
-  link: string;
+  description?: string; // Make optional if allowed by DB
+  image_url?: string; // Optional URL for the project's main image
+  tags?: string[]; // Optional array of text tags
+  live_url?: string; // Optional URL to the live project
+  repo_url?: string; // Optional URL to the code repository
+  sort_order?: number; // Optional: For controlling display order
 }
 
-// Define the structure for the 'projects' section, allowing dynamic keys
-export interface ProjectsSection { // Added export
-  title: string;
-  // Index signature to allow any string key for project objects
-  // It also allows the 'title' property defined above.
-  [key: string]: Project | string;
-}
+// ProjectsSection interface removed as it represented the old JSONB structure

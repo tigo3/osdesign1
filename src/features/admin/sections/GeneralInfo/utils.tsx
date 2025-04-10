@@ -1,8 +1,82 @@
-import { translations as defaultTranslations } from '../../../../config/translations';
+import supabase from '../../../../config/supabaseConfig'; // Import Supabase client
 
-// Define the type for the keys of the 'en' object in translations based on the imported default
-// This might be better placed in a shared types file if used elsewhere, but keep here for now if only used by isValidTranslationKey
-type TranslationSectionKey = keyof typeof defaultTranslations.en;
+// Define the structure for General Info data from the database
+export interface GeneralInfoData {
+  id?: number; // Optional ID, useful if we need it later
+  site_title: string | null;
+  site_role: string | null;
+  logo_url: string | null;
+}
+
+// Function to fetch general info from the database
+export const fetchGeneralInfo = async (): Promise<GeneralInfoData | null> => {
+  if (!supabase) {
+    console.error("Supabase client not initialized.");
+    return null;
+  }
+  // Assuming there's only one row for general site info, often with ID 1
+  // Adjust the query if your setup is different (e.g., filtering by a specific condition)
+  const { data, error } = await supabase
+    .from('general_info')
+    .select('id, site_title, site_role, logo_url')
+    .limit(1) // Fetch only one row
+    .single(); // Expect a single result or null
+
+  if (error) {
+    console.error('Error fetching general info:', error);
+    return null;
+  }
+
+  // console.log('Fetched general info:', data); // Optional: for debugging
+  return data;
+};
+
+// Function to update general info in the database
+export const updateGeneralInfo = async (info: Partial<GeneralInfoData>): Promise<boolean> => {
+   if (!supabase) {
+    console.error("Supabase client not initialized.");
+    return false;
+  }
+  // We need an ID to update. Fetch it first if not provided, or assume ID 1.
+  // For simplicity, let's assume we always update the row with ID 1.
+  // A more robust approach might fetch the ID first if it's not known.
+  const recordId = 1; // Adjust if your primary key or logic differs
+
+  // Remove 'id' from the update payload if present
+  const { id, ...updateData } = info;
+
+  const { error } = await supabase
+    .from('general_info')
+    .update(updateData)
+    .eq('id', recordId); // Update the specific row
+
+  if (error) {
+    console.error('Error updating general info:', error);
+    return false;
+  }
+
+  // console.log('Successfully updated general info for ID:', recordId); // Optional: for debugging
+  return true;
+};
+
+
+// --- Existing code from utils.tsx below ---
+// Define the explicit keys allowed based on the *current* EnglishTranslations interface
+// This ensures we only check against keys defined in the actual type used by TabContentRenderer
+const allowedTranslationKeys = [
+    // 'generalInfo', // Removed
+    // 'hero', // Removed
+    'about', // Keep 'about' if 'about.title' remains
+    'projects',
+    'contact',
+    'services',
+    'footer', // Keep 'footer' if the object remains (even if empty)
+    'ui' // Add 'ui' as it's a valid key in translations.en
+] as const; // Use 'as const' for stricter typing
+
+// Define the type based on the updated list
+type TranslationSectionKey = typeof allowedTranslationKeys[number];
+
 
 // Helper function to recursively render form fields for nested objects
 export const renderFields = (
@@ -242,6 +316,6 @@ export const renderFields = (
 // Type guard to check if a key is a valid TranslationSectionKey
 export const isValidTranslationKey = (key: string | null): key is TranslationSectionKey => {
   if (key === null) return false;
-  // Check against the keys of the imported default translations
-  return key in defaultTranslations.en;
+  // Check against the explicitly defined allowed keys
+  return (allowedTranslationKeys as readonly string[]).includes(key);
 };

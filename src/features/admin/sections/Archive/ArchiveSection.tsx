@@ -1,83 +1,66 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react'; // Added useCallback
 import { useNotifications } from '../../../../contexts/NotificationContext'; // Import notification hook
 import supabase from '../../../../config/supabaseConfig'; // Import supabase client
-import { db } from '../../../../config/firebaseConfig'; // Import firebase db
-import { collection, getDocs, doc, writeBatch, getDoc } from 'firebase/firestore'; // Import firestore functions, added getDoc
+// Removed Firebase imports
+
+// Define Supabase table names used in this component
+const SITE_CONTENT_TABLE = 'site_content';
+const SOCIAL_LINKS_TABLE = 'social_links';
+const PAGES_TABLE = 'pages';
+const BACKUP_BUCKET = 'backups'; // Define bucket name
 
 const ArchiveSection: React.FC = () => {
-  const { showToast, requestConfirmation } = useNotifications(); // Get showToast and requestConfirmation
+  const { showToast, requestConfirmation } = useNotifications();
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [availableBackups, setAvailableBackups] = useState<{ name: string; created_at: string }[]>([]);
   const [selectedBackup, setSelectedBackup] = useState<string | null>(null);
 
-  // Function to fetch all relevant data from Firestore
+  // Function to fetch all relevant data from Supabase tables
   const fetchAllSiteData = async () => {
-    // IMPORTANT: Define ALL collections/documents that constitute a full site backup.
-    // Include 'settings' collection for the styles document, remove 'styles'
-    const collectionsToBackup = ['translations', 'projects', 'services', 'pages', 'socialLinks', 'generalInfo', 'settings']; // Example list - ADJUST THIS
+    if (!supabase) {
+      throw new Error("Supabase client is not available.");
+    }
     const backupData: { [key: string]: any } = {};
+    const tablesToBackup = [SITE_CONTENT_TABLE, SOCIAL_LINKS_TABLE, PAGES_TABLE]; // Add other tables if needed
 
     try {
-      if (!db) {
-        throw new Error("Firestore database instance is not available.");
-      }
-      for (const collectionName of collectionsToBackup) {
-        // Handle potential single-document "collections" like generalInfo or styles
-        // Handle single-document collections/paths
-        if (collectionName === 'generalInfo') {
-           // Assuming 'generalInfo' is stored as a single document with ID 'main'
-           const docRef = doc(db, 'generalInfo', 'main'); // db is checked above
-           const docSnap = await getDoc(docRef);
-           if (docSnap.exists()) {
-             backupData[collectionName] = { [docSnap.id]: docSnap.data() };
-           } else {
-             console.warn(`Document 'main' not found in collection 'generalInfo'`);
-           }
-        } else if (collectionName === 'settings') {
-           // Fetch the specific 'styles' document from the 'settings' collection
-           const docRef = doc(db, 'settings', 'styles'); // db is checked above
-           const docSnap = await getDoc(docRef);
-           if (docSnap.exists()) {
-             // Store it under 'settings' key, with 'styles' as the doc ID key
-             backupData[collectionName] = { styles: docSnap.data() };
-           } else {
-             console.warn(`Document 'styles' not found in collection 'settings'`);
-           }
+      for (const tableName of tablesToBackup) {
+        const { data, error } = await supabase.from(tableName).select('*');
+        if (error) {
+          console.error(`Error fetching data from Supabase table ${tableName}:`, error);
+          // Decide if you want to continue or throw error
+          // For backup, maybe log and continue?
+          continue; // Skip this table on error
+        }
+        if (data && data.length > 0) {
+          backupData[tableName] = data; // Store the array of rows
         } else {
-          // Handle regular collections with multiple documents
-          const querySnapshot = await getDocs(collection(db, collectionName)); // db is checked above
-          const docsData: { [key: string]: any } = {};
-          querySnapshot.forEach((doc) => {
-            docsData[doc.id] = doc.data();
-          });
-          if (Object.keys(docsData).length > 0) {
-             backupData[collectionName] = docsData;
-          } else {
-             console.warn(`No documents found in collection '${collectionName}'`);
-          }
+          console.warn(`No data found in Supabase table '${tableName}'`);
         }
       }
-      console.log('Data fetched for backup:', backupData);
+      console.log('Data fetched from Supabase for backup:', backupData);
       return backupData;
     } catch (error) {
-      console.error("Error fetching data from Firestore:", error);
-      throw new Error("Failed to fetch site data for backup.");
+      console.error("Error during Supabase data fetch:", error);
+      throw new Error("Failed to fetch site data from Supabase for backup.");
     }
   };
 
-  // Function to list backups from Supabase
-  const listBackups = async () => {
+  // Function to list backups from Supabase Storage
+  const listBackups = useCallback(async () => { // Wrap in useCallback
       if (!supabase) return;
       try {
           const { data: files, error: listError } = await supabase.storage
-              .from('backups')
-              .list('', { limit: 100, offset: 0, sortBy: { column: 'created_at', order: 'desc' } }); // List latest 100
+              .from(BACKUP_BUCKET) // Use constant
+              .list('', { limit: 100, offset: 0, sortBy: { column: 'created_at', order: 'desc' } });
 
           if (listError) throw listError;
 
           if (files) {
-              setAvailableBackups(files.map(f => ({ name: f.name, created_at: f.created_at || new Date().toISOString() })));
+              // Filter out potential placeholder files if Supabase Storage adds them
+              const validBackups = files.filter(f => f.name !== '.emptyFolderPlaceholder');
+              setAvailableBackups(validBackups.map(f => ({ name: f.name, created_at: f.created_at || new Date().toISOString() })));
           } else {
               setAvailableBackups([]);
           }
@@ -86,12 +69,13 @@ const ArchiveSection: React.FC = () => {
           showToast(`Failed to list backups: ${error.message}`, 'error');
           setAvailableBackups([]);
       }
-  };
+  // Add dependencies for useCallback
+  }, [showToast]); // supabase is stable
 
   // Fetch backups on component mount
-  React.useEffect(() => {
+  useEffect(() => {
       listBackups();
-  }, []);
+  }, [listBackups]); // Add listBackups to dependency array
 
 
   const handleBackup = async () => {
@@ -126,11 +110,11 @@ const ArchiveSection: React.FC = () => {
 
       // supabase is checked at the start of the function
       const { data, error } = await supabase.storage
-        .from('backups') // Ensure this bucket name is correct
+        .from(BACKUP_BUCKET) // Use constant
         .upload(fileName, blob, { cacheControl: '3600', upsert: false });
 
       if (error) {
-        console.error("handleBackup: Supabase upload error:", error); // Log Supabase error
+        console.error("handleBackup: Supabase upload error:", error);
         throw new Error(error.message || 'Failed to upload backup to Supabase.');
       }
 
@@ -146,30 +130,63 @@ const ArchiveSection: React.FC = () => {
     }
   };
 
-  // Function to write restored data back to Firestore
-  const writeDataToFirestore = async (dataToRestore: { [key: string]: any }) => {
-      if (!db) {
-        throw new Error("Firestore database instance is not available for writing.");
+  // Function to write restored data back to Supabase tables
+  const writeDataToSupabase = async (dataToRestore: { [key: string]: any[] }) => {
+      if (!supabase) {
+        throw new Error("Supabase client is not available for writing.");
       }
-      const batch = writeBatch(db); // db is checked above
 
-      for (const collectionName in dataToRestore) {
-          const collectionOrDocData = dataToRestore[collectionName];
-          // Check if it's the specific settings/styles document structure
-          if (collectionName === 'settings' && collectionOrDocData.hasOwnProperty('styles')) {
-              const docRef = doc(db, 'settings', 'styles'); // db is checked above
-              batch.set(docRef, collectionOrDocData.styles); // Restore the styles document
-          } else {
-              // Handle regular collections
-              for (const docId in collectionOrDocData) {
-                  const docData = collectionOrDocData[docId];
-                  const docRef = doc(db, collectionName, docId); // db is checked above
-                  batch.set(docRef, docData); // Use set to overwrite existing documents
+      // Process tables sequentially for simplicity, could be parallelized with Promise.all
+      for (const tableName in dataToRestore) {
+          const tableData = dataToRestore[tableName]; // This should be an array of row objects
+
+          if (!Array.isArray(tableData)) {
+              console.warn(`Skipping restore for ${tableName}: Data is not an array.`);
+              continue;
+          }
+
+          console.log(`Restoring data for table: ${tableName}`);
+
+          try {
+              // 1. Delete existing data in the table
+              // CAUTION: This deletes ALL data in the table before restoring.
+              // Ensure this is the desired behavior. Adjust filter if needed.
+              // Using a placeholder condition that should always be true to delete all rows.
+              // Make sure the column used (e.g., 'id') exists and is suitable.
+              console.log(`Deleting existing data from ${tableName}...`);
+              const { error: deleteError } = await supabase
+                  .from(tableName)
+                  .delete()
+                  .neq('id', -9999); // Placeholder condition, assumes 'id' exists and is not -9999
+
+              if (deleteError) {
+                  console.error(`Error deleting data from ${tableName}:`, deleteError);
+                  throw new Error(`Failed to clear table ${tableName} before restore.`);
               }
+              console.log(`Existing data deleted from ${tableName}.`);
+
+              // 2. Insert restored data
+              if (tableData.length > 0) {
+                  console.log(`Inserting ${tableData.length} rows into ${tableName}...`);
+                  const { error: insertError } = await supabase
+                      .from(tableName)
+                      .insert(tableData);
+
+                  if (insertError) {
+                      console.error(`Error inserting data into ${tableName}:`, insertError);
+                      throw new Error(`Failed to insert data into table ${tableName} during restore.`);
+                  }
+                  console.log(`Data inserted into ${tableName}.`);
+              } else {
+                  console.log(`No data to insert into ${tableName}.`);
+              }
+          } catch (error) {
+              // Log intermediate errors and re-throw to stop the restore process
+              console.error(`Error during restore process for table ${tableName}:`, error);
+              throw error; // Stop restore on first table failure
           }
       }
-
-      await batch.commit();
+      console.log("Supabase data restore completed for all tables.");
   };
 
 
@@ -199,11 +216,11 @@ const ArchiveSection: React.FC = () => {
                 // Add explicit null check for supabase inside the callback
                 if (!supabase) {
                     showToast('Supabase client is not available.', 'error');
-                    setIsRestoring(false); // Ensure state is reset
+                    setIsRestoring(false);
                     return;
                 }
                 const { data: downloadData, error: downloadError } = await supabase.storage
-                    .from('backups')
+                    .from(BACKUP_BUCKET) // Use constant
                     .download(selectedBackup);
 
                 if (downloadError) throw downloadError;
@@ -218,8 +235,8 @@ const ArchiveSection: React.FC = () => {
                     throw new Error('Invalid backup file format.');
                 }
 
-                // 3. Write data back to Firestore
-                await writeDataToFirestore(restoredData);
+                // 3. Write data back to Supabase
+                await writeDataToSupabase(restoredData);
 
                 showToast('Site restore successful!', 'success');
 
@@ -235,9 +252,9 @@ const ArchiveSection: React.FC = () => {
 
   return (
     <div className="p-6 bg-white dark:bg-gray-800 shadow-md rounded-lg">
-      <h2 className="text-2xl font-semibold mb-4 text-gray-800 dark:text-white">Archive & Restore (Supabase)</h2>
+      <h2 className="text-2xl font-semibold mb-4 text-gray-800 dark:text-white">Backup & Restore (Supabase)</h2>
       <p className="mb-6 text-gray-600 dark:text-gray-300">
-        Backup your site configuration and data from Firestore to Supabase Storage, or restore from a previous backup.
+        Backup your site configuration and data from Supabase tables to Supabase Storage, or restore from a previous backup.
       </p>
 
       {/* Backup Button */}
@@ -304,7 +321,7 @@ const ArchiveSection: React.FC = () => {
                   </p>
               </>
           ) : (
-              <p className="text-sm text-gray-500 dark:text-gray-400">No backups found in Supabase Storage bucket 'backups'.</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">No backups found in Supabase Storage bucket '{BACKUP_BUCKET}'.</p>
           )}
       </div>
     </div>

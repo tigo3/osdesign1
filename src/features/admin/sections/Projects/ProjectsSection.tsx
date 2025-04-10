@@ -1,154 +1,156 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useNotifications } from '../../../../contexts/NotificationContext';
-import { Trash2, Edit, ChevronDown, ChevronUp } from 'lucide-react'; // Import icons
+import { Trash2, PlusSquare, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'; // Updated icons
+import { useProjectManagement } from './hooks/useProjectManagement'; // Import the new hook
 import { Project } from './types'; // Import the Project type
 
-// Define the structure for the data prop passed to ProjectsSection
-interface ProjectsData {
-  title: string;
-  // Index signature for project items, ensuring they match the Project type
-  [key: string]: Project | string;
-}
+// Props are no longer needed as data comes from the hook
+const ProjectsSection: React.FC = () => {
+  const {
+    projects,
+    isLoading,
+    error,
+    addProject,
+    updateProject,
+    deleteProject,
+  } = useProjectManagement(); // Use the new hook
 
-// Define the props type for the ProjectsSection component
-interface ProjectsSectionProps {
-  data: ProjectsData; // Expect the whole projects object structure
-  path: (string | number)[]; // The base path, e.g., ['projects']
-  handleChange: (path: (string | number)[], value: string | string[]) => void; // Allow string[] for tags
-  handleAddProject: () => void;
-  handleDelete: (path: (string | number)[]) => void; // Path to the project object to delete
-  // renderFields, editingPath, setEditingPath are no longer needed
-}
-
-const ProjectsSection: React.FC<ProjectsSectionProps> = ({
-  data,
-  path,
-  handleChange,
-  handleAddProject,
-  handleDelete,
-}) => {
   const { requestConfirmation } = useNotifications();
-  // State to track the expanded state of each item { projectKey: boolean }
+  // State to track the expanded state of each item { projectId: boolean }
   const [expandedItems, setExpandedItems] = useState<{ [key: string]: boolean }>({});
-
-  // Ensure data exists
-  if (!data || typeof data !== 'object') {
-    return <p className="text-red-500">Error: Projects data is missing or invalid.</p>;
-  }
-
-  const sectionTitlePath = [...path, 'title'];
-
-  // Filter out the 'title' key to get only project objects
-  const projectEntries = Object.entries(data).filter(
-    ([key, value]) => key !== 'title' && typeof value === 'object' && value !== null
-  ) as [string, Project][]; // Type assertion
-
-  const toggleItemExpansion = (projectKey: string) => {
-    setExpandedItems(prev => ({
-      ...prev,
-      [projectKey]: !prev[projectKey] // Toggle state for the specific project key
-    }));
-  };
-
   // State for the current tag input value for each project
   const [tagInputValue, setTagInputValue] = useState<{ [key: string]: string }>({});
 
-  // Handle adding a new tag
-  const handleAddTag = (projectKey: string, projectPath: (string | number)[], currentTags: string[]) => {
-    const newTag = (tagInputValue[projectKey] || '').trim();
-    if (newTag && !currentTags.includes(newTag)) {
-      handleChange(projectPath, [...currentTags, newTag]);
-      setTagInputValue(prev => ({ ...prev, [projectKey]: '' })); // Clear input
-    } else if (!newTag) {
-      // If input is empty but user pressed Enter/Comma, just clear (prevents adding empty tags)
-       setTagInputValue(prev => ({ ...prev, [projectKey]: '' }));
+  const toggleItemExpansion = (projectId: string) => {
+    setExpandedItems(prev => ({
+      ...prev,
+      [projectId]: !prev[projectId] // Toggle state for the specific project ID
+    }));
+  };
+
+  // Handle adding a new project with default values
+  const handleAddNewProjectClick = useCallback(() => {
+    const defaultProject: Omit<Project, 'id'> = {
+      title: 'New Project',
+      description: '',
+      image_url: '',
+      tags: [],
+      live_url: '',
+      repo_url: '',
+      sort_order: projects.length, // Append to the end by default
+    };
+    addProject(defaultProject);
+  }, [addProject, projects.length]);
+
+  // Handle input changes and trigger update
+  const handleProjectChange = useCallback((projectId: string, field: keyof Project, value: string | string[]) => {
+    // Special handling for tags if value is string (from tag input)
+    if (field === 'tags' && typeof value === 'string') {
+        // This case shouldn't happen with the current tag logic, but as a safeguard
+        console.warn("Attempted to update tags with a single string, expected array.");
+        return;
     }
-  };
+    updateProject(projectId, { [field]: value });
+  }, [updateProject]);
 
-  // Handle removing a tag
-  const handleRemoveTag = (projectPath: (string | number)[], currentTags: string[], tagToRemove: string) => {
-    handleChange(projectPath, currentTags.filter(tag => tag !== tagToRemove));
-  };
+  // Handle deletion confirmation
+  const handleDeleteClick = useCallback((projectId: string, projectTitle: string) => {
+     requestConfirmation({
+        message: `Are you sure you want to delete project "${projectTitle || `Item #${projectId}`}"?\nThis action cannot be undone.`,
+        onConfirm: () => deleteProject(projectId),
+        confirmText: 'Delete Project',
+        title: 'Confirm Deletion'
+      });
+  }, [deleteProject, requestConfirmation]);
 
-  // Handle input change for the tag input field
-  const handleTagInputChange = (projectKey: string, value: string) => {
-     // Prevent adding comma itself as part of the tag
+  // --- Tag Management Handlers ---
+  const handleTagInputChange = (projectId: string, value: string) => {
+    // Prevent adding comma itself as part of the tag
     if (value.endsWith(',')) {
-       setTagInputValue(prev => ({ ...prev, [projectKey]: value.slice(0, -1) })); // Update state without comma
+       setTagInputValue(prev => ({ ...prev, [projectId]: value.slice(0, -1) }));
     } else {
-       setTagInputValue(prev => ({ ...prev, [projectKey]: value }));
+       setTagInputValue(prev => ({ ...prev, [projectId]: value }));
     }
   };
 
-  // Handle key down events (Enter or Comma) for adding tags
-  const handleTagInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>, projectKey: string, projectPath: (string | number)[], currentTags: string[]) => {
+  const handleAddTag = useCallback((projectId: string, currentTags: string[]) => {
+    const newTag = (tagInputValue[projectId] || '').trim();
+    if (newTag && !currentTags.includes(newTag)) {
+      updateProject(projectId, { tags: [...currentTags, newTag] });
+      setTagInputValue(prev => ({ ...prev, [projectId]: '' })); // Clear input
+    } else if (!newTag) {
+       setTagInputValue(prev => ({ ...prev, [projectId]: '' })); // Clear if empty
+    }
+  }, [tagInputValue, updateProject]);
+
+  const handleRemoveTag = useCallback((projectId: string, currentTags: string[], tagToRemove: string) => {
+    updateProject(projectId, { tags: currentTags.filter(tag => tag !== tagToRemove) });
+  }, [updateProject]);
+
+  const handleTagInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>, projectId: string, currentTags: string[]) => {
     if (event.key === 'Enter' || event.key === ',') {
-      event.preventDefault(); // Prevent form submission or comma appearing in input
-      handleAddTag(projectKey, projectPath, currentTags);
+      event.preventDefault();
+      handleAddTag(projectId, currentTags);
     }
   };
+  // --- End Tag Management Handlers ---
+
+
+  if (isLoading && projects.length === 0) { // Show loader only on initial load
+    return (
+      <div className="flex justify-center items-center p-6">
+        <Loader2 className="h-8 w-8 animate-spin text-gray-500" />
+        <span className="ml-2 text-gray-600">Loading projects...</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return <p className="text-red-500 p-4">Error loading projects: {error}</p>;
+  }
 
   return (
     <div className="space-y-6">
-      {/* Section Title Input */}
-      <div>
-        <label htmlFor="projects-section-title" className="block text-sm font-medium text-gray-700 mb-1">
-          Section Title
-        </label>
-        <input
-          id="projects-section-title"
-          type="text"
-          value={typeof data.title === 'string' ? data.title : ''}
-          onChange={(e) => handleChange(sectionTitlePath, e.target.value)}
-          className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-          placeholder="Enter the title for the projects section"
-        />
-      </div>
+      {/* Section Title Input Removed */}
 
       {/* Add New Project Button */}
       <div className="flex justify-end">
         <button
-          onClick={handleAddProject}
-          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 flex items-center gap-2"
+          onClick={handleAddNewProjectClick} // Use the new handler
+          disabled={isLoading} // Disable button while loading/saving
+          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 flex items-center gap-2 disabled:opacity-50"
           aria-label="Add new project item"
         >
-          <Edit size={16} /> Add New Project
+          <PlusSquare size={16} /> Add New Project
         </button>
       </div>
 
       {/* Project Items List */}
       <div className="space-y-3">
         <h3 className="text-lg font-medium text-gray-800 border-b pb-2 mb-3">
-          Project Items ({projectEntries.length})
+          Project Items ({projects.length})
         </h3>
-        {projectEntries.length === 0 ? (
+        {projects.length === 0 ? (
           <p className="text-gray-500 italic">No projects added yet. Click "Add New Project" to begin.</p>
         ) : (
-          projectEntries.map(([projectKey, projectData]) => {
-            const projectPath = [...path, projectKey];
-            const titlePath = [...projectPath, 'title'];
-            const descriptionPath = [...projectPath, 'description'];
-            const tagsPath = [...projectPath, 'tags'];
-            const linkPath = [...projectPath, 'link'];
-            const isExpanded = expandedItems[projectKey] || false; // Default to collapsed
-
-            // Ensure projectData has expected fields (provide defaults if necessary)
-            const currentTitle = projectData?.title || '';
-            const currentDescription = projectData?.description || '';
-            const currentTags = Array.isArray(projectData?.tags) ? projectData.tags : [];
-            const currentLink = projectData?.link || '';
+          // Use projects array from the hook
+          projects.map((project) => {
+            // Use project.id as the key and for state management
+            const isExpanded = expandedItems[project.id] || false;
+            const currentTags = Array.isArray(project.tags) ? project.tags : [];
 
             return (
-              <div key={projectKey} className="bg-gray-50 rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+              // Use project.id as the key
+              <div key={project.id} className="bg-gray-50 rounded-lg border border-gray-200 shadow-sm overflow-hidden">
                 {/* Clickable Header */}
                 <div
                   className="flex items-center p-3 cursor-pointer hover:bg-gray-100 relative group"
-                  onClick={() => toggleItemExpansion(projectKey)}
-                  role="button" // Add role for accessibility
-                  tabIndex={0} // Make it focusable
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleItemExpansion(projectKey); }} // Keyboard interaction
+                  onClick={() => toggleItemExpansion(project.id)} // Use project.id
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleItemExpansion(project.id); }}
                   aria-expanded={isExpanded}
-                  aria-controls={`project-content-${projectKey}`}
+                  aria-controls={`project-content-${project.id}`} // Use project.id
                 >
                   {/* Chevron Icon */}
                   <div className="mr-3 text-gray-500">
@@ -157,22 +159,19 @@ const ProjectsSection: React.FC<ProjectsSectionProps> = ({
 
                   {/* Project Title (Display Only in Header) */}
                   <div className="flex-grow mr-2 font-medium text-gray-700 truncate">
-                    {currentTitle || `Project: ${projectKey}`} {/* Show title or key */}
+                    {project.title || `Project: ${project.id}`} {/* Show title or ID */}
                   </div>
 
                   {/* Delete Button (inside header) */}
                   <button
                     onClick={(e) => {
-                      e.stopPropagation(); // Prevent accordion toggle
-                      requestConfirmation({
-                        message: `Are you sure you want to delete project "${currentTitle || projectKey}"?\nThis action cannot be undone.`,
-                        onConfirm: () => handleDelete(projectPath),
-                        confirmText: 'Delete Project',
-                        title: 'Confirm Deletion'
-                      });
+                      e.stopPropagation();
+                      // Call deleteProject via handler
+                      handleDeleteClick(project.id, project.title);
                     }}
-                    className="p-1 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity focus:outline-none focus:ring-1 focus:ring-red-500 rounded-full z-10"
-                    aria-label={`Delete project ${currentTitle || projectKey}`}
+                    disabled={isLoading} // Disable button during loading/saving
+                    className="p-1 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity focus:outline-none focus:ring-1 focus:ring-red-500 rounded-full z-10 disabled:opacity-50"
+                    aria-label={`Delete project ${project.title || project.id}`}
                   >
                     <Trash2 size={18} />
                   </button>
@@ -180,40 +179,58 @@ const ProjectsSection: React.FC<ProjectsSectionProps> = ({
 
                 {/* Collapsible Content */}
                 {isExpanded && (
-                  <div id={`project-content-${projectKey}`} className="p-4 border-t border-gray-200 bg-white space-y-4">
+                  <div id={`project-content-${project.id}`} className="p-4 border-t border-gray-200 bg-white space-y-4">
                     {/* Project Title Input */}
                     <div>
-                      <label htmlFor={`project-title-${projectKey}`} className="block text-sm font-medium text-gray-600 mb-1">
+                      <label htmlFor={`project-title-${project.id}`} className="block text-sm font-medium text-gray-600 mb-1">
                         Project Title
                       </label>
                       <input
-                        id={`project-title-${projectKey}`}
+                        id={`project-title-${project.id}`}
                         type="text"
-                        value={currentTitle}
-                        onChange={(e) => handleChange(titlePath, e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                        value={project.title || ''}
+                        onChange={(e) => handleProjectChange(project.id, 'title', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100"
                         placeholder="Enter project title"
+                        disabled={isLoading}
                       />
                     </div>
 
                     {/* Project Description Input */}
                     <div>
-                      <label htmlFor={`project-description-${projectKey}`} className="block text-sm font-medium text-gray-600 mb-1">
+                      <label htmlFor={`project-description-${project.id}`} className="block text-sm font-medium text-gray-600 mb-1">
                         Description
                       </label>
                       <textarea
-                        id={`project-description-${projectKey}`}
-                        value={currentDescription}
-                        onChange={(e) => handleChange(descriptionPath, e.target.value)}
+                        id={`project-description-${project.id}`}
+                        value={project.description || ''}
+                        onChange={(e) => handleProjectChange(project.id, 'description', e.target.value)}
                         rows={4}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100"
                         placeholder="Enter project description"
+                        disabled={isLoading}
                       />
                     </div>
 
-                    {/* Improved Project Tags Input */}
+                     {/* Project Image URL Input */}
                     <div>
-                      <label htmlFor={`project-tags-input-${projectKey}`} className="block text-sm font-medium text-gray-600 mb-1">
+                      <label htmlFor={`project-image-${project.id}`} className="block text-sm font-medium text-gray-600 mb-1">
+                        Image URL
+                      </label>
+                      <input
+                        id={`project-image-${project.id}`}
+                        type="url"
+                        value={project.image_url || ''}
+                        onChange={(e) => handleProjectChange(project.id, 'image_url', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100"
+                        placeholder="https://example.com/image.jpg"
+                        disabled={isLoading}
+                      />
+                    </div>
+
+                    {/* Project Tags Input */}
+                    <div>
+                      <label htmlFor={`project-tags-input-${project.id}`} className="block text-sm font-medium text-gray-600 mb-1">
                         Tags (add with Enter or comma)
                       </label>
                       <div className="flex flex-wrap items-center gap-2 p-2 border border-gray-300 rounded-md bg-white">
@@ -222,40 +239,76 @@ const ProjectsSection: React.FC<ProjectsSectionProps> = ({
                             {tag}
                             <button
                               type="button"
-                              onClick={() => handleRemoveTag(tagsPath, currentTags, tag)}
-                              className="ml-1.5 text-blue-600 hover:text-blue-800 focus:outline-none"
+                              onClick={() => handleRemoveTag(project.id, currentTags, tag)}
+                              className="ml-1.5 text-blue-600 hover:text-blue-800 focus:outline-none disabled:opacity-50"
                               aria-label={`Remove tag ${tag}`}
+                              disabled={isLoading}
                             >
-                              &times; {/* Multiplication sign as 'x' */}
+                              &times;
                             </button>
                           </span>
                         ))}
                         <input
-                          id={`project-tags-input-${projectKey}`}
+                          id={`project-tags-input-${project.id}`}
                           type="text"
-                          value={tagInputValue[projectKey] || ''}
-                          onChange={(e) => handleTagInputChange(projectKey, e.target.value)}
-                          onKeyDown={(e) => handleTagInputKeyDown(e, projectKey, tagsPath, currentTags)}
-                          className="flex-grow px-1 py-0.5 border-none focus:ring-0 focus:outline-none text-sm"
+                          value={tagInputValue[project.id] || ''}
+                          onChange={(e) => handleTagInputChange(project.id, e.target.value)}
+                          onKeyDown={(e) => handleTagInputKeyDown(e, project.id, currentTags)}
+                          className="flex-grow px-1 py-0.5 border-none focus:ring-0 focus:outline-none text-sm disabled:bg-gray-100"
                           placeholder={currentTags.length === 0 ? "e.g., react, typescript" : "Add tag..."}
+                          disabled={isLoading}
                         />
                       </div>
                     </div>
 
-                    {/* Project Link Input */}
+                    {/* Project Live URL Input */}
                     <div>
-                      <label htmlFor={`project-link-${projectKey}`} className="block text-sm font-medium text-gray-600 mb-1">
-                        Project Link (URL)
+                      <label htmlFor={`project-live-url-${project.id}`} className="block text-sm font-medium text-gray-600 mb-1">
+                        Live URL (Optional)
                       </label>
                       <input
-                        id={`project-link-${projectKey}`}
+                        id={`project-live-url-${project.id}`}
                         type="url"
-                        value={currentLink}
-                        onChange={(e) => handleChange(linkPath, e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-                        placeholder="https://example.com"
+                        value={project.live_url || ''}
+                        onChange={(e) => handleProjectChange(project.id, 'live_url', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100"
+                        placeholder="https://live-project.com"
+                        disabled={isLoading}
                       />
                     </div>
+
+                     {/* Project Repo URL Input */}
+                    <div>
+                      <label htmlFor={`project-repo-url-${project.id}`} className="block text-sm font-medium text-gray-600 mb-1">
+                        Repository URL (Optional)
+                      </label>
+                      <input
+                        id={`project-repo-url-${project.id}`}
+                        type="url"
+                        value={project.repo_url || ''}
+                        onChange={(e) => handleProjectChange(project.id, 'repo_url', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100"
+                        placeholder="https://github.com/user/repo"
+                        disabled={isLoading}
+                      />
+                    </div>
+
+                     {/* Sort Order Input */}
+                    <div>
+                       <label htmlFor={`project-sort-${project.id}`} className="block text-sm font-medium text-gray-600 mb-1">
+                        Sort Order (Optional)
+                      </label>
+                      <input
+                        id={`project-sort-${project.id}`}
+                        type="number"
+                        value={project.sort_order ?? ''} // Handle potential undefined value
+                        onChange={(e) => handleProjectChange(project.id, 'sort_order', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-gray-100"
+                        placeholder="e.g., 0, 1, 2..."
+                        disabled={isLoading}
+                      />
+                    </div>
+
                   </div>
                 )}
               </div>

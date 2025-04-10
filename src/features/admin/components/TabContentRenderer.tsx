@@ -11,9 +11,11 @@ import ImageUploader from '../sections/ImageManagement/components/ImageUploader'
 
 // Import Utilities and Types (Adjust path as necessary)
 // Corrected utility and type imports
-import { renderFields, isValidTranslationKey } from '../sections/GeneralInfo/utils';
+import { renderFields, isValidTranslationKey } from '../sections/GeneralInfo/utils'; // Keep if renderFields is used elsewhere
 import { getStaticSectionName } from '../utils/helpers';
-import { TranslationsType } from '../../../types/translations'; // Corrected path
+import { TranslationsType } from '../../../types/translations';
+// Import SiteSettingsData type
+import { SiteSettingsData } from '../hooks/useAdminData'; // Assuming it's exported from hook
 
 // Mock data for dashboard widgets (Should ideally come from props or context)
 const stats = {
@@ -26,13 +28,13 @@ const stats = {
 interface TabContentRendererProps {
   activeTab: string | null;
   isLoading: boolean;
-  translations: TranslationsType; // Use the correct imported type
+  translations: TranslationsType;
+  siteSettings: SiteSettingsData; // Add siteSettings prop
   editingPath: string | null;
   setEditingPath: (path: string | null) => void;
-  handleInputChange: (path: (string | number)[], value: string | string[]) => void; // Allow string[] for tags
-  handleAddNewProject: () => void;
-  handleAddNewService: () => void;
-  handleDeleteItem: (path: (string | number)[], index?: number) => void; // Match expected path signature
+  handleTranslationsChange: (path: (string | number)[], value: string | string[]) => void; // Use renamed handler
+  handleSiteSettingChange: (key: keyof SiteSettingsData, value: string) => void; // Add site settings handler
+  handleDeleteItem: (path: (string | number)[], index?: number) => void;
 }
 
 const renderDashboardContent = () => {
@@ -83,11 +85,11 @@ const TabContentRenderer: React.FC<TabContentRendererProps> = ({
   activeTab,
   isLoading,
   translations,
+  siteSettings, // Destructure new prop
   editingPath,
   setEditingPath,
-  handleInputChange,
-  handleAddNewProject,
-  handleAddNewService,
+  handleTranslationsChange, // Use renamed handler
+  handleSiteSettingChange, // Destructure new handler
   handleDeleteItem,
 }) => {
   if (isLoading) {
@@ -112,56 +114,56 @@ const TabContentRenderer: React.FC<TabContentRendererProps> = ({
   if (activeTab === 'media') {
     return <ImageUploader />;
   }
-
-  // Check if the activeTab corresponds to a section in translations
-  if (isValidTranslationKey(activeTab)) {
+  // Handle generalInfo explicitly here
+  if (activeTab === 'generalInfo') {
+    // No need for isValidTranslationKey check for this specific tab
     const staticTabTitle = getStaticSectionName(activeTab);
-
     return (
       <>
         <h3 className="text-xl font-semibold mb-4 text-gray-700 capitalize">
           {staticTabTitle}
         </h3>
-        {activeTab === 'projects' ? (
-          <ProjectsSection
-          data={translations.en.projects} // Assuming 'en' locale for now
-          path={activeTab ? [activeTab as string] : []}
-          handleChange={handleInputChange} // Type updated to allow string[]
-          // editingPath, setEditingPath, renderFields removed
-          handleAddProject={handleAddNewProject}
-          handleDelete={handleDeleteItem}
-          />
-          ) : activeTab === 'services' ? (
-          <ServicesSection
-          data={translations.en.services} // Assuming 'en' locale
-          path={activeTab ? [activeTab as string] : []}
-          handleChange={handleInputChange}
-          // editingPath and setEditingPath removed as they are no longer props of ServicesSection
-          handleAddService={handleAddNewService}
-          handleDelete={handleDeleteItem}
-          // renderFields prop removed as ServicesSection now handles its own rendering
-          />
-          ) : activeTab === 'generalInfo' ? (
-          <GeneralInfoSection
-          translations={translations} // Pass the whole translations object
-          handleInputChange={handleInputChange}
+        {/* Render GeneralInfoSection directly when activeTab is 'generalInfo' */}
+        <GeneralInfoSection
+          siteSettings={siteSettings}
+          handleSiteSettingChange={handleSiteSettingChange}
+          translations={translations}
+          handleTranslationsChange={handleTranslationsChange}
           editingPath={editingPath}
           setEditingPath={setEditingPath}
           getStaticSectionName={getStaticSectionName}
-          />
-          ) : (
-          // Fallback for other potential translation keys if needed
-          // This part might need adjustment based on how other sections are handled
-          renderFields(
-            translations.en[activeTab], // Assuming 'en' locale
-            [activeTab],
-            handleInputChange,
-            editingPath,
-            setEditingPath,
-            undefined, // handleAdd - might need specific handlers
-            handleDeleteItem
-          )
-        )}
+        />
+      </>
+    );
+  }
+
+  // Check if the activeTab corresponds to *other* sections in translations
+  if (isValidTranslationKey(activeTab)) { // Now activeTab cannot be 'generalInfo' here
+    const staticTabTitle = getStaticSectionName(activeTab);
+    return (
+      <>
+        <h3 className="text-xl font-semibold mb-4 text-gray-700 capitalize">
+          {staticTabTitle}
+        </h3>
+        {/* Removed the incorrect check for activeTab === 'projects' inside the generalInfo block */}
+        {activeTab === 'projects' ? (
+          <ProjectsSection />
+        ) : activeTab === 'services' ? (
+          <ServicesSection />
+        ) : /* No 'generalInfo' case needed here anymore */
+          // Fallback rendering logic for remaining valid translation keys
+          translations.en[activeTab] ? ( // Check existence just in case
+            renderFields(
+              translations.en[activeTab], // The data object
+              [activeTab], // Base path
+              handleTranslationsChange, // Handler
+              editingPath, // Current editing state
+              setEditingPath,
+              undefined, // handleAdd - might need specific handlers
+              handleDeleteItem
+            )
+          ) : null // Fallback renders null if key doesn't exist in translations
+        }
       </>
     );
   }

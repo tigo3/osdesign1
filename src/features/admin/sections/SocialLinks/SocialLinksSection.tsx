@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { db } from '../../../../config/firebaseConfig';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy, writeBatch } from 'firebase/firestore';
+import React, { useState, useEffect, useCallback } from 'react';
+import supabase from '../../../../config/supabaseConfig'; // Import Supabase client
 import { PlusCircle } from 'lucide-react';
 import { useNotifications } from '../../../../contexts/NotificationContext';
-import { SocialLink } from './types'; // Corrected path
+import { SocialLink } from './types'; // Corrected path (assuming type matches useSocialLinks)
 import SocialLinkForm from './components/SocialLinkForm'; // Corrected path
 import SocialLinkItem from './components/SocialLinkItem'; // Corrected path
 
@@ -13,31 +12,43 @@ const SocialLinksSection: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isAdding, setIsAdding] = useState(false);
   const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
-  // State to hold data for the form when editing
-  const [currentEditData, setCurrentEditData] = useState<Omit<SocialLink, 'id'> | null>(null);
+  // State to hold data for the form when editing (using SocialLink type, id is ignored on add)
+  const [currentEditData, setCurrentEditData] = useState<SocialLink | null>(null);
 
-  // Memoize the collection reference
-  const linksCollectionRef = useMemo(() => db ? collection(db, 'socialLinks') : null, []);
+  // Define Supabase table name
+  const SOCIAL_LINKS_TABLE = 'social_links';
 
   const fetchLinks = useCallback(async () => {
-    if (!db || !linksCollectionRef) {
-      showToast("Error: Firestore is not initialized.", 'error');
+    if (!supabase) {
+      showToast("Error: Supabase client is not initialized.", 'error');
       setIsLoading(false);
       return;
     }
     setIsLoading(true);
     try {
-      const q = query(linksCollectionRef, orderBy('order', 'asc'));
-      const data = await getDocs(q);
-      const fetchedLinks = data.docs.map((doc) => ({ ...doc.data(), id: doc.id } as SocialLink));
+      const { data, error } = await supabase
+        .from(SOCIAL_LINKS_TABLE)
+        .select('*')
+        .order('sort_order', { ascending: true });
+
+      if (error) throw error;
+
+      // Map Supabase data to the SocialLink interface (consistent with useSocialLinks hook)
+      const fetchedLinks = data?.map(item => ({
+        id: String(item.id),
+        name: item.platform,
+        url: item.url,
+        icon: item.platform,
+        order: item.sort_order
+      })) || [];
       setLinks(fetchedLinks);
-    } catch (err) {
-      console.error("Error fetching social links:", err);
+    } catch (err: any) {
+      console.error("Error fetching social links from Supabase:", err);
       showToast("Failed to load social links. Please try again.", 'error');
     } finally {
       setIsLoading(false);
     }
-  }, [linksCollectionRef, showToast]);
+  }, [showToast]); // supabase is stable, no need to include
 
   useEffect(() => {
     fetchLinks();
@@ -46,72 +57,98 @@ const SocialLinksSection: React.FC = () => {
   const resetFormState = () => {
     setIsAdding(false);
     setEditingLinkId(null);
-    setCurrentEditData(null); // Clear editing data
+    setCurrentEditData(null);
   };
 
+  // formData is Omit<SocialLink, 'id'> - comes from the form
   const handleAddLink = async (formData: Omit<SocialLink, 'id'>) => {
-    if (!db || !linksCollectionRef) {
-      showToast("Error: Firestore is not initialized.", 'error');
+    if (!supabase) {
+      showToast("Error: Supabase client is not initialized.", 'error');
       return;
     }
     try {
-      // Ensure order is set correctly for new links (append to the end)
+      // Calculate new sort_order
       const newOrder = links.length > 0 ? Math.max(...links.map(l => l.order)) + 1 : 0;
-      // Use formData directly from the form component
-      await addDoc(linksCollectionRef, { ...formData, order: newOrder });
+      // Map form data (name, url) to Supabase columns (platform, url)
+      const { error } = await supabase
+        .from(SOCIAL_LINKS_TABLE)
+        .insert({
+          platform: formData.name, // Use name from form
+          url: formData.url,       // Use url from form
+          sort_order: newOrder     // Use calculated order
+        });
+
+      if (error) throw error;
+
       showToast('Link added successfully!', 'success');
       resetFormState();
       fetchLinks(); // Refresh list
-    } catch (err) {
-      console.error("Error adding link:", err);
+    } catch (err: any) {
+      console.error("Error adding link to Supabase:", err);
       showToast("Failed to add link. Please try again.", 'error');
     }
   };
 
+  // formData is Omit<SocialLink, 'id'> - comes from the form
   const handleUpdateLink = async (formData: Omit<SocialLink, 'id'>) => {
-    if (!editingLinkId || !db) {
-      showToast("Error: Cannot update link or Firestore is not initialized.", 'error');
+    if (!editingLinkId || !supabase) {
+      showToast("Error: Cannot update link or Supabase client is not initialized.", 'error');
       return;
     }
     try {
-      const linkDoc = doc(db, 'socialLinks', editingLinkId);
-      // Use formData directly from the form component, including the order
-      await updateDoc(linkDoc, formData);
+      // Map form data (name, url, order) to Supabase columns (platform, url, sort_order)
+      const { error } = await supabase
+        .from(SOCIAL_LINKS_TABLE)
+        .update({
+          platform: formData.name,    // Use name from form
+          url: formData.url,          // Use url from form
+          sort_order: formData.order  // Use order from form
+        })
+        .eq('id', editingLinkId); // Match the ID
+
+      if (error) throw error;
+
       showToast('Link updated successfully!', 'success');
       resetFormState();
       fetchLinks(); // Refresh list
-    } catch (err) {
-      console.error("Error updating link:", err);
+    } catch (err: any) {
+      console.error("Error updating link in Supabase:", err);
       showToast("Failed to update link. Please try again.", 'error');
     }
   };
 
+  // Reordering using two separate updates
   const handleMove = async (index: number, direction: 'up' | 'down') => {
-     if (!db) {
-        showToast("Error: Firestore is not initialized.", 'error');
+     if (!supabase) {
+        showToast("Error: Supabase client is not initialized.", 'error');
         return;
      }
      const swapIndex = direction === 'up' ? index - 1 : index + 1;
-     if (swapIndex < 0 || swapIndex >= links.length) return; // Boundary check
+     if (swapIndex < 0 || swapIndex >= links.length) return;
 
      const linkToMove = links[index];
      const linkToSwapWith = links[swapIndex];
 
-     const batch = writeBatch(db);
-     const linkToMoveRef = doc(db, 'socialLinks', linkToMove.id);
-     const linkToSwapWithRef = doc(db, 'socialLinks', linkToSwapWith.id);
-
-     // Swap order values
-     batch.update(linkToMoveRef, { order: linkToSwapWith.order });
-     batch.update(linkToSwapWithRef, { order: linkToMove.order });
-
      try {
-       await batch.commit();
+       // Perform updates sequentially
+       const { error: error1 } = await supabase
+         .from(SOCIAL_LINKS_TABLE)
+         .update({ sort_order: linkToSwapWith.order }) // Give linkToMove the order of linkToSwapWith
+         .eq('id', linkToMove.id);
+       if (error1) throw error1;
+
+       const { error: error2 } = await supabase
+         .from(SOCIAL_LINKS_TABLE)
+         .update({ sort_order: linkToMove.order }) // Give linkToSwapWith the original order of linkToMove
+         .eq('id', linkToSwapWith.id);
+       if (error2) throw error2;
+
        showToast(`Link moved ${direction} successfully.`, 'success');
        fetchLinks(); // Refresh list with new order
-     } catch (err) {
-       console.error(`Error moving link ${direction}:`, err);
+     } catch (err: any) {
+       console.error(`Error moving link ${direction} in Supabase:`, err);
        showToast("Failed to reorder link. Please try again.", 'error');
+       // Note: If one update fails, the order might be temporarily inconsistent. Fetching should resolve.
      }
    };
 
@@ -125,21 +162,25 @@ const SocialLinksSection: React.FC = () => {
     requestConfirmation({
       message: `Are you sure you want to delete the link "${linkToDelete.name}"?`,
       onConfirm: async () => {
-        if (!db) {
-           showToast("Error: Firestore is not initialized.", 'error');
+        if (!supabase) {
+           showToast("Error: Supabase client is not initialized.", 'error');
            return;
         }
         try {
-          const linkDoc = doc(db, 'socialLinks', id);
-          await deleteDoc(linkDoc);
+          const { error } = await supabase
+            .from(SOCIAL_LINKS_TABLE)
+            .delete()
+            .eq('id', id);
+
+          if (error) throw error;
+
           showToast('Link deleted successfully!', 'success');
           fetchLinks(); // Refresh list
-          // If the deleted link was being edited, reset the form
           if (editingLinkId === id) {
             resetFormState();
           }
-        } catch (err) {
-          console.error("Error deleting link:", err);
+        } catch (err: any) {
+          console.error("Error deleting link from Supabase:", err);
           showToast("Failed to delete link. Please try again.", 'error');
         }
       },
@@ -150,15 +191,18 @@ const SocialLinksSection: React.FC = () => {
 
   const startEditing = (link: SocialLink) => {
     setEditingLinkId(link.id);
-    // Set the data needed for the form
-    setCurrentEditData({ name: link.name, url: link.url, icon: link.icon, order: link.order });
-    setIsAdding(false); // Ensure not in adding mode
+    // Set the full link object for the form
+    setCurrentEditData(link);
+    setIsAdding(false);
   };
 
+  // Form submits Omit<SocialLink, 'id'>
   const handleFormSubmit = (formData: Omit<SocialLink, 'id'>) => {
     if (editingLinkId) {
+      // Pass the form data directly to handleUpdateLink
       handleUpdateLink(formData);
     } else {
+      // Pass the form data directly to handleAddLink
       handleAddLink(formData);
     }
   };

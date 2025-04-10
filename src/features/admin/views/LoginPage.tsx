@@ -1,22 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { signInWithEmailAndPassword, onAuthStateChanged } from "firebase/auth";
-import { auth } from '../../../config/firebaseConfig';
-
-// Password strength requirements
-const validatePassword = (password: string): boolean => {
-  const minLength = 8;
-  const hasUpperCase = /[A-Z]/.test(password);
-  const hasLowerCase = /[a-z]/.test(password);
-  const hasNumbers = /\d/.test(password);
-  const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(password);
-  
-  return password.length >= minLength && 
-         hasUpperCase && 
-         hasLowerCase && 
-         hasNumbers && 
-         hasSpecialChar;
-};
+import supabase from '../../../config/supabaseConfig'; // Import Supabase client
 
 const LoginPage: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -25,26 +9,30 @@ const LoginPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  // Session timeout - 30 minutes
+  // Check initial auth state and listen for changes with Supabase
   useEffect(() => {
-    const sessionTimeout = setTimeout(() => {
-      if (auth) { // Check if auth is not null
-        auth.signOut();
-      }
-    }, 30 * 60 * 1000);
+    if (!supabase) return;
 
-    return () => clearTimeout(sessionTimeout);
-  }, []);
-
-  useEffect(() => {
-    if (!auth) return; // Check if auth is not null
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        // Redirect to the base admin path, let AdminDashboard handle default view
+    // Check current session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
         navigate('/admin', { replace: true });
       }
     });
-    return () => unsubscribe();
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        navigate('/admin', { replace: true });
+      } else {
+        // Optional: Handle logout redirection if needed, e.g., navigate('/login');
+      }
+    });
+
+    // Cleanup subscription on unmount
+    return () => {
+      subscription?.unsubscribe();
+    };
   }, [navigate]);
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -52,48 +40,39 @@ const LoginPage: React.FC = () => {
     setError('');
     setLoading(true);
 
-    // Validate email
+    // Basic email validation (optional, Supabase handles format server-side)
     if (!email.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
-      setError('Please enter a valid email address');
+      setError('Please enter a valid email address format.');
       setLoading(false);
       return;
     }
 
-    // Validate password strength
-    if (!validatePassword(password)) {
-      setError('Password must be at least 8 characters long and contain uppercase, lowercase, numbers, and special characters');
-      setLoading(false);
-      return;
-    }
+    // Password validation removed - Supabase handles this
 
-    if (!auth) { // Check if auth is not null
+    if (!supabase) {
       setError('Authentication service is not available.');
       setLoading(false);
       return;
     }
 
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-    } catch (err: any) {
-      let errorMessage = 'Failed to log in. Please check your credentials.';
-      if (err.code) {
-        switch (err.code) {
-          case 'auth/user-not-found':
-          case 'auth/wrong-password':
-          case 'auth/invalid-credential':
-            errorMessage = 'Invalid email or password.';
-            break;
-          case 'auth/invalid-email':
-            errorMessage = 'Invalid email format.';
-            break;
-          case 'auth/too-many-requests':
-            errorMessage = 'Too many failed attempts. Please try again later.';
-            break;
-          default:
-            console.error('Firebase Login error:', err);
-        }
+      // Use Supabase sign in
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: email,
+        password: password,
+      });
+
+      if (signInError) {
+        // Handle Supabase specific errors
+        console.error('Supabase Login error:', signInError);
+        // Provide a generic error or map specific Supabase errors if needed
+        setError(signInError.message || 'Invalid login credentials.');
       }
-      setError(errorMessage);
+      // No explicit navigation here, the onAuthStateChange listener will handle it
+    } catch (err: any) {
+      // Catch unexpected errors during the process
+      console.error('Unexpected Login error:', err);
+      setError('An unexpected error occurred during login.');
     } finally {
       setLoading(false);
     }

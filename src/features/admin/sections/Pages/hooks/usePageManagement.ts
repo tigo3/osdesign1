@@ -1,36 +1,51 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Page } from '../types'; // Corrected path
-import { db } from '../../../../../config/firebaseConfig'; // Corrected path
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy, writeBatch } from 'firebase/firestore';
+import supabase from '../../../../../config/supabaseConfig'; // Import Supabase client
 import { useNotifications } from '../../../../../contexts/NotificationContext'; // Corrected path
+
+// Define Supabase table name
+const PAGES_TABLE = 'pages';
 
 // --- usePageManagement Hook ---
 export const usePageManagement = () => {
   const { showToast, requestConfirmation } = useNotifications();
   const [pages, setPages] = useState<Page[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isEditing, setIsEditing] = useState<string | null>(null);
-  const pagesCollectionRef = useMemo(() => db ? collection(db, 'pages') : null, []);
+  const [isEditing, setIsEditing] = useState<string | null>(null); // Keep track of the ID being edited
 
   const fetchPages = useCallback(async () => {
-    if (!db || !pagesCollectionRef) {
-      showToast("Error: Firestore database is not initialized.", 'error');
+    if (!supabase) {
+      showToast("Error: Supabase client is not initialized.", 'error');
       setIsLoading(false);
       return;
     }
     setIsLoading(true);
     try {
-      const pagesQuery = query(pagesCollectionRef, orderBy('order', 'asc'));
-      const pageSnapshot = await getDocs(pagesQuery);
-      const pagesList = pageSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Page));
+      // Fetch pages ordered by creation date (newest first) for admin view
+      const { data, error } = await supabase
+        .from(PAGES_TABLE)
+        .select('*')
+        .order('created_at', { ascending: false }); // Admin might want newest first
+
+      if (error) throw error;
+
+      // Map Supabase data to the Page interface
+      const pagesList = data?.map(item => ({
+        id: String(item.id),
+        slug: item.slug,
+        title: item.title,
+        content: item.content,
+        is_published: item.is_published,
+        // order is now optional and not fetched/used for ordering here
+      } as Page)) || [];
       setPages(pagesList);
-    } catch (err) {
-      console.error("Error fetching pages:", err);
+    } catch (err: any) {
+      console.error("Error fetching pages from Supabase:", err);
       showToast('Failed to load pages. Check console for details.', 'error');
     } finally {
       setIsLoading(false);
     }
-  }, [pagesCollectionRef, showToast]);
+  }, [showToast]); // supabase is stable
 
   useEffect(() => {
     fetchPages();
@@ -40,76 +55,90 @@ export const usePageManagement = () => {
     setIsEditing(null);
   }, []);
 
+  // Form data likely won't include id or order
   const handleFormSubmit = useCallback(async (formData: Omit<Page, 'id' | 'order'>) => {
     setIsLoading(true);
-    if (!db) { // Add check right before Firestore operation
-      showToast("Error: Firestore database is not initialized.", 'error');
+    if (!supabase) {
+      showToast("Error: Supabase client is not initialized.", 'error');
       setIsLoading(false);
       return;
     }
+
+    // Prepare data for Supabase (order is omitted)
+    // Ensure is_published is included, default to false if not provided by form
+    const pageData = {
+        title: formData.title,
+        slug: formData.slug,
+        content: formData.content,
+        is_published: formData.is_published ?? false, // Default to false if not set
+    };
+
     try {
-      let currentOrder: number;
       if (isEditing) {
-        const editingPage = pages.find(p => p.id === isEditing);
-        currentOrder = editingPage?.order ?? 0;
-      } else {
-        currentOrder = pages.length > 0 ? Math.max(...pages.map(p => p.order)) + 1 : 0;
-      }
-
-      const pageData: Omit<Page, 'id'> = { ...formData, order: currentOrder };
-
-      if (isEditing) {
-        const pageRef = doc(db, 'pages', isEditing); // db is now guaranteed non-null here
-        await updateDoc(pageRef, pageData);
+        // Update existing page
+        const { error } = await supabase
+          .from(PAGES_TABLE)
+          .update(pageData)
+          .eq('id', isEditing);
+        if (error) throw error;
         showToast('Page updated successfully!', 'success');
       } else {
-        if (!pagesCollectionRef) throw new Error("Collection reference not available"); // Ensure ref is checked too
-        await addDoc(pagesCollectionRef, pageData);
+        // Insert new page (Supabase handles created_at)
+        const { error } = await supabase
+          .from(PAGES_TABLE)
+          .insert(pageData);
+        if (error) throw error;
         showToast('Page added successfully!', 'success');
       }
       resetForm();
       fetchPages(); // Refetch after successful save
-    } catch (err) {
-      console.error("Error saving page:", err);
+    } catch (err: any) {
+      console.error("Error saving page to Supabase:", err);
       showToast('Failed to save page. Check console for details.', 'error');
-      setIsLoading(false); // Ensure loading stops on error
+    } finally {
+      // fetchPages sets loading to false, so no need here unless error occurs before fetchPages call
+      setIsLoading(false);
     }
-    // No finally setIsLoading(false) here, as fetchPages handles it
-  }, [db, pagesCollectionRef, isEditing, pages, showToast, fetchPages, resetForm]);
+  }, [supabase, isEditing, showToast, fetchPages, resetForm]); // Removed pages dependency
 
   const handleDelete = useCallback((id: string) => {
     if (!id) {
         showToast("Cannot delete page: Invalid ID.", 'error');
         return;
     }
+    const pageTitle = pages.find(p => p.id === id)?.title || id;
     requestConfirmation({
-      message: `Are you sure you want to delete the page "${pages.find(p => p.id === id)?.title || id}"?\nThis action cannot be undone.`,
+      message: `Are you sure you want to delete the page "${pageTitle}"?\nThis action cannot be undone.`,
       onConfirm: async () => {
-        if (!db) { // Add check inside onConfirm
-          showToast("Error: Firestore database is not initialized.", 'error');
-          setIsLoading(false); // Stop loading if db is null
+        if (!supabase) {
+          showToast("Error: Supabase client is not initialized.", 'error');
           return;
         }
-        setIsLoading(true);
+        setIsLoading(true); // Indicate loading during delete
         try {
-          const pageRef = doc(db, 'pages', id); // db is now guaranteed non-null here
-          await deleteDoc(pageRef);
+          const { error } = await supabase
+            .from(PAGES_TABLE)
+            .delete()
+            .eq('id', id);
+
+          if (error) throw error;
+
           showToast('Page deleted successfully!', 'success');
           if (isEditing === id) {
-            resetForm();
+            resetForm(); // Reset form if the deleted page was being edited
           }
-          fetchPages(); // Refetch after delete
-        } catch (err) {
-          console.error("Error deleting page:", err);
+          fetchPages(); // Refetch pages list
+        } catch (err: any) {
+          console.error("Error deleting page from Supabase:", err);
           showToast('Failed to delete page. Check console for details.', 'error');
           setIsLoading(false); // Ensure loading stops on error
         }
-        // No finally setIsLoading(false) here, as fetchPages handles it
+        // fetchPages will set loading to false on success/failure
       },
       confirmText: 'Delete Page',
       title: 'Confirm Deletion'
     });
-  }, [db, pages, isEditing, showToast, requestConfirmation, fetchPages, resetForm]);
+  }, [supabase, pages, isEditing, showToast, requestConfirmation, fetchPages, resetForm]);
 
   const startEditing = useCallback((page: Page) => {
     if (!page.id) {
@@ -119,38 +148,7 @@ export const usePageManagement = () => {
     setIsEditing(page.id);
   }, [showToast]);
 
-  const handleMove = useCallback(async (index: number, direction: 'up' | 'down') => {
-    const newIndex = direction === 'up' ? index - 1 : index + 1;
-    if (newIndex < 0 || newIndex >= pages.length) return; // Boundary checks
-
-    if (!db || !pagesCollectionRef) { // Add check right before Firestore operation
-        showToast("Error: Firestore database or collection ref is not initialized.", 'error');
-        return;
-    }
-    setIsLoading(true);
-    const pageToMove = pages[index];
-    const pageToSwapWith = pages[newIndex];
-    const batch = writeBatch(db); // db is now guaranteed non-null here
-    const pageToMoveRef = doc(pagesCollectionRef, pageToMove.id!); // pagesCollectionRef is also checked
-    const pageToSwapWithRef = doc(pagesCollectionRef, pageToSwapWith.id!); // pagesCollectionRef is also checked
-
-    batch.update(pageToMoveRef, { order: pageToSwapWith.order });
-    batch.update(pageToSwapWithRef, { order: pageToMove.order });
-
-    try {
-      await batch.commit();
-      showToast(`Page moved ${direction} successfully.`, 'success');
-      fetchPages(); // Refetch after move
-    } catch (err) {
-      console.error(`Error moving page ${direction}:`, err);
-      showToast(`Failed to reorder page. Please try again.`, 'error');
-      setIsLoading(false); // Ensure loading stops on error
-    }
-     // No finally setIsLoading(false) here, as fetchPages handles it
-  }, [db, pagesCollectionRef, pages, showToast, fetchPages]);
-
-  const handleMoveUp = useCallback((index: number) => handleMove(index, 'up'), [handleMove]);
-  const handleMoveDown = useCallback((index: number) => handleMove(index, 'down'), [handleMove]);
+  // Remove handleMove, handleMoveUp, handleMoveDown as ordering is based on created_at
 
   return {
     pages,
@@ -161,7 +159,6 @@ export const usePageManagement = () => {
     handleDelete,
     startEditing,
     resetForm,
-    handleMoveUp,
-    handleMoveDown,
+    // Removed handleMoveUp, handleMoveDown
   };
 };

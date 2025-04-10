@@ -1,27 +1,43 @@
-import { ProjectsSection } from '../features/admin/sections/Projects/types'; // Adjust import path
+// Removed incorrect import for ProjectsSection
 import { ServiceItem } from '../features/admin/sections/Services/types'; // Adjust import path
+
+// Define the structure for individual project translations
+interface ProjectTranslation {
+  title: string;
+  description: string;
+  tags: string[];
+  link: string;
+}
 
 // Define the overall structure for the 'en' translations object explicitly
 // This provides better type safety than relying solely on 'typeof'
 interface EnglishTranslations {
-  generalInfo: {
-    title: string;
-    siteTitle: string;
-    siteRole: string;
-    logoUrl: string;
-    // footerText is likely part of the footer now, removing from generalInfo
+  // Added UI section based on src/config/translations.ts
+  ui: {
+    everythingYouNeed: string;
+    features: { title: string; description: string }[]; // Assuming this structure
+    contactDescription: string;
+    quickLinks: string;
+    contactInfo: string;
+    // phone removed
+    // address removed
+    // mail removed
+    links: string;
+    home: string;
+    getStarted: string;
   };
-  hero: { // Updated Hero section type
-    title: string;
-    title2?: string; // Make title2 optional as it might not exist in other languages
-    subtitle: string;
-    ctaButtonText?: string; // Make ctaButtonText optional
-  };
+  // generalInfo removed
+  // hero removed
   about: {
-    title: string;
-    description: string;
+    title: string; // Keep title if used as section header
+    // description removed
   };
-  projects: ProjectsSection; // Use the flexible ProjectsSection type
+  // Updated projects type to match src/config/translations.ts structure (Keep as is)
+  projects: {
+    title: string;
+    // Index signature for project entries like 'project1', 'project2'
+    [key: string]: ProjectTranslation | string; // Value can be ProjectTranslation or the top-level title string
+  };
   contact: {
     title: string;
     nameLabel: string;
@@ -36,9 +52,8 @@ interface EnglishTranslations {
       title: string;
       list: ServiceItem[];
   };
-  footer: { // Added Footer section type
-    copyright: string;
-    // Add other footer fields as needed, e.g., links array, social media info
+  footer: { // Keep footer object if needed for future translations
+    // copyright removed
   };
 }
 

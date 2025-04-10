@@ -1,6 +1,10 @@
 import { useEffect } from 'react';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { db } from '../config/firebaseConfig';
+import supabase from '../config/supabaseConfig'; // Import Supabase client
+import { LanguageKey } from '../types/translations'; // Import LanguageKey type if needed
+
+// Define Supabase table and language key
+const SITE_CONTENT_TABLE = 'site_content';
+const TARGET_LANGUAGE: LanguageKey = 'en';
 
 interface StyleData {
   primaryColor: string;
@@ -16,46 +20,59 @@ interface StyleData {
 
 export const useGlobalStyles = () => {
   useEffect(() => {
-    if (!db) {
-      console.error("useGlobalStyles: Firestore not initialized correctly.");
+    if (!supabase) {
+      console.error("useGlobalStyles: Supabase client not initialized correctly.");
       return;
     }
-    const stylesDocRef = doc(db, 'settings', 'styles');
-    // console.log("useGlobalStyles: Setting up real-time listener for global styles..."); // Removed log
 
-    const unsubscribe = onSnapshot(stylesDocRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data() as StyleData;
-        // console.log('useGlobalStyles: Received style update from Firestore:', data); // Removed log
-        // Apply styles as CSS variables to the root element
-        // Apply styles using the CSS variable names expected by the Tailwind theme plugin
-        document.documentElement.style.setProperty('--color-primary', data.primaryColor);
-        document.documentElement.style.setProperty('--color-secondary', data.secondaryColor);
-        document.documentElement.style.setProperty('--font-family', data.fontFamily); // Font family variable seems consistent
-        // Map specific color names from Firestore to the generic text/background variables used by the plugin
-        document.documentElement.style.setProperty('--color-text', data.textColor || '#c6d3e2'); // Default fallback for main text
-        // Set specific title colors, falling back to primary or text color if not defined
-        document.documentElement.style.setProperty('--title-color', data.titleColor || data.primaryColor || '#FFFFFF'); // Fallback to primary, then white
-        document.documentElement.style.setProperty('--h3-title-color', data.h3TitleColor || data.textColor || '#E5E7EB'); // Fallback to text color, then light gray
-        document.documentElement.style.setProperty('--color-background', data.backgroundFromColor || '#111827'); // Use 'from' as the main background
-        document.documentElement.style.setProperty('--color-background-secondary', data.backgroundToColor || '#1F2937'); // Use 'to' as secondary background
-        // --section-bg-color is not directly used by the theme plugin, keep it if needed by custom CSS like .sectionbg
-        document.documentElement.style.setProperty('--section-bg-color', data.sectionBgColor || '#374151');
-        // Add fallbacks for hover/light/dark variants if not set by Firestore (or handle in plugin)
-        // Example: document.documentElement.style.setProperty('--color-primary-hover', data.primaryColorHover || data.primaryColor);
-      } else {
-        // console.log("useGlobalStyles: No global styles document found in Firestore, using CSS defaults."); // Removed log
-        // Optionally clear or set default variables if the document is deleted
-        // document.documentElement.style.removeProperty('--primary-color'); // Example
+    const fetchAndApplyStyles = async () => {
+      // Add null check again for async scope
+      if (!supabase) {
+        console.error("useGlobalStyles (fetch): Supabase client became null.");
+        return;
       }
-    }, (error) => {
-      console.error("useGlobalStyles: Error listening to global styles:", error);
-    });
+      try {
+        const { data: siteContentData, error } = await supabase
+          .from(SITE_CONTENT_TABLE)
+          .select('content') // Select the whole content object
+          .eq('language', TARGET_LANGUAGE)
+          .single();
 
-    // Cleanup listener on component unmount
-    return () => {
-      // console.log("useGlobalStyles: Unsubscribing from global styles listener."); // Removed log
-      unsubscribe();
+        if (error) {
+          if (error.code === 'PGRST116') { // Row not found
+            console.warn(`useGlobalStyles: No site content found for language '${TARGET_LANGUAGE}'. Cannot apply styles.`);
+          } else {
+            throw error; // Re-throw other errors
+          }
+          return; // Stop if no data or error occurred
+        }
+
+        // Extract styles from the content JSONB, assuming a 'styles' key
+        const stylesData = siteContentData?.content?.styles as StyleData | undefined;
+
+        if (stylesData) {
+          // console.log('useGlobalStyles: Received style update from Supabase:', stylesData); // Optional log
+          // Apply styles as CSS variables
+          document.documentElement.style.setProperty('--color-primary', stylesData.primaryColor);
+          document.documentElement.style.setProperty('--color-secondary', stylesData.secondaryColor);
+          document.documentElement.style.setProperty('--font-family', stylesData.fontFamily);
+          document.documentElement.style.setProperty('--color-text', stylesData.textColor || '#c6d3e2');
+          document.documentElement.style.setProperty('--title-color', stylesData.titleColor || stylesData.primaryColor || '#FFFFFF');
+          document.documentElement.style.setProperty('--h3-title-color', stylesData.h3TitleColor || stylesData.textColor || '#E5E7EB');
+          document.documentElement.style.setProperty('--color-background', stylesData.backgroundFromColor || '#111827');
+          document.documentElement.style.setProperty('--color-background-secondary', stylesData.backgroundToColor || '#1F2937');
+          document.documentElement.style.setProperty('--section-bg-color', stylesData.sectionBgColor || '#374151');
+          // Add other style variables as needed
+        } else {
+          console.warn(`useGlobalStyles: 'styles' key not found in site content for language '${TARGET_LANGUAGE}'. Using CSS defaults.`);
+          // Optionally clear or set default variables here
+        }
+      } catch (error) {
+        console.error("useGlobalStyles: Error fetching styles from Supabase:", error);
+      }
     };
+
+    fetchAndApplyStyles();
+    // No cleanup needed for one-time fetch. Add Supabase Realtime subscription if needed.
   }, []); // Empty dependency array ensures this runs only once on mount
 };

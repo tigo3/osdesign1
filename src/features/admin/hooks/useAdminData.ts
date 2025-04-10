@@ -1,337 +1,346 @@
 import { useState, useCallback, useEffect } from 'react';
-import { doc, setDoc, onSnapshot, updateDoc } from "firebase/firestore";
-import { db } from '../../../config/firebaseConfig'; // Adjust path as needed
+import supabase from '../../../config/supabaseConfig'; // Import Supabase client
 import { translations as defaultTranslations } from '../../../config/translations'; // Adjust path as needed
 import { useNotifications } from '../../../contexts/NotificationContext'; // Import the hook
 // Updated imports for moved types and constants
 import { TranslationsType, LanguageKey } from '../../../types/translations'; // Moved global types
-import { newProjectTemplate } from '../sections/Projects/constants'; // Moved project constant
-import { ServiceItem } from '../sections/Services/types'; // Moved service type
+// newProjectTemplate import removed as projects are now in a separate table/hook
+// ServiceItem import removed as services are now in a separate table/hook
 import { updateNestedState } from '../utils/helpers'; // Moved helper function
 
-// Define Firestore document path
-const TRANSLATIONS_DOC_PATH = 'translations/en';
+// Define Supabase tables and language key
+const SITE_CONTENT_TABLE = 'site_content';
+const SITE_SETTINGS_TABLE = 'site_settings'; // New table name
+const SITE_SETTINGS_ID = 1; // ID for the single settings row
+const TARGET_LANGUAGE: LanguageKey = 'en';
 
-// Define a template for new service items if not imported from types.ts
-const newServiceTemplate: ServiceItem = {
-  title: 'New Service Title',
-  description: 'New service description.',
-  // icon: 'default-icon.png' // Add default icon if applicable
+// Define and EXPORT a type for the site settings data structure (matching the table)
+export interface SiteSettingsData { // Added export
+  id?: number; // Should always be 1
+  site_title?: string | null;
+  site_role?: string | null;
+  logo_url?: string | null;
+  hero_title?: string | null;
+  hero_title2?: string | null;
+  hero_subtitle?: string | null;
+  hero_cta_button_text?: string | null;
+  about_description?: string | null;
+  footer_copyright?: string | null;
+  contact_phone?: string | null;
+  contact_address?: string | null;
+  contact_mail?: string | null;
+  updated_at?: string;
+}
+
+// Define default values for site settings (used for initialization and reset)
+const defaultSiteSettings: SiteSettingsData = {
+  id: SITE_SETTINGS_ID,
+  site_title: "Default Site Title",
+  site_role: "Default Role",
+  logo_url: "",
+  hero_title: "Default Hero Title",
+  hero_title2: "",
+  hero_subtitle: "Default hero subtitle.",
+  hero_cta_button_text: "Get Started",
+  about_description: "Default about description.",
+  footer_copyright: `© ${new Date().getFullYear()} Default Copyright`,
+  contact_phone: "",
+  contact_address: "",
+  contact_mail: "",
 };
 
-export const useAdminData = () => {
-  // Initialize with default translations, will be overwritten by Firebase data
-  const [translations, setTranslations] = useState<TranslationsType>(defaultTranslations);
-  const [isLoading, setIsLoading] = useState(true); // Add loading state
-  const [saveStatus, setSaveStatus] = useState(''); // Keep for potential non-toast status
-  const { showToast } = useNotifications(); // Get the toast function
 
-  // Effect to fetch data from Firestore on mount and listen for changes
+export const useAdminData = () => {
+  // State for existing translations (site_content table)
+  const [translations, setTranslations] = useState<TranslationsType>(defaultTranslations);
+  // State for new site settings (site_settings table)
+  const [siteSettings, setSiteSettings] = useState<SiteSettingsData>(defaultSiteSettings);
+  const [isLoading, setIsLoading] = useState(true);
+  const [saveStatus, setSaveStatus] = useState(''); // Combined save status for now
+  const { showToast } = useNotifications();
+
+  // Effect to fetch data from Supabase on mount
   useEffect(() => {
-    if (!db) { // db is Firestore instance here
-      console.error("Firestore instance is not available.");
-      setSaveStatus("Error: Firestore connection failed.");
+    if (!supabase) {
+      console.error("Supabase client is not available.");
+      setSaveStatus("Error: Supabase connection failed.");
       setIsLoading(false);
       return;
     }
-    // Get a reference to the Firestore document
-    const translationsDocRef = doc(db, TRANSLATIONS_DOC_PATH);
-    setIsLoading(true);
 
-    // Use onSnapshot for real-time updates
-    const unsubscribe = onSnapshot(translationsDocRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        // Directly set the 'en' state from Firestore data, assuming it's the complete source of truth
-        setTranslations(prev => ({
-          ...prev, // Keep other potential language keys if structure allows
-          en: data as TranslationsType['en'] // Trust Firestore data for 'en'
-        }));
-      } else {
-        // Document doesn't exist, use defaults (including default 'en')
-        setTranslations(defaultTranslations);
-        console.log("No translations document found in Firestore, using defaults.");
-        // Optionally create the document with defaults here
-        // setDoc(translationsDocRef, defaultTranslations.en);
+    const fetchSiteContent = async () => {
+      // Add null check here again to satisfy TypeScript within this scope
+      if (!supabase) {
+          console.error("useAdminData (fetch): Supabase client is not available.");
+          // Error state is already set outside, just return
+          setIsLoading(false); // Ensure loading stops
+          return;
       }
-      setIsLoading(false);
-    }, (error) => {
-      console.error("Firestore snapshot error:", error);
-      setSaveStatus("Error fetching data from Firestore.");
-      setIsLoading(false);
-      // Keep existing state or fallback to defaults? For now, keep state.
-    });
+      setIsLoading(true);
+      let contentData: TranslationsType['en'] | null = null;
+      let settingsData: SiteSettingsData | null = null;
+      let fetchError = null;
 
-    // Cleanup listener on unmount
-    return () => unsubscribe(); // onSnapshot returns the unsubscribe function directly
-  }, []); // Empty dependency array ensures this runs only on mount and unmount
+      try {
+        // Fetch site_content (existing translations)
+        const { data: contentResult, error: contentError } = await supabase
+          .from(SITE_CONTENT_TABLE)
+          .select('content')
+          .eq('language', TARGET_LANGUAGE)
+          .single();
 
-  // Note: updateNestedState uses 'any', so type safety relies on correct path construction
-  const handleInputChange = useCallback((fullPath: (string | number)[], value: string | string[]) => { // Allow string[] for tags
+        if (contentError && contentError.code !== 'PGRST116') {
+          fetchError = contentError; // Store error but continue to fetch settings
+          console.error(`Error fetching site content from Supabase for ${TARGET_LANGUAGE}:`, contentError);
+        } else {
+          contentData = contentResult?.content as TranslationsType['en'] ?? null;
+        }
+
+        // Fetch site_settings
+        const { data: settingsResult, error: settingsError } = await supabase
+          .from(SITE_SETTINGS_TABLE)
+          .select('*')
+          .eq('id', SITE_SETTINGS_ID)
+          .single();
+
+        if (settingsError && settingsError.code !== 'PGRST116') {
+          fetchError = settingsError; // Store error
+          console.error(`Error fetching site settings from Supabase:`, settingsError);
+        } else {
+          settingsData = settingsResult as SiteSettingsData ?? null;
+        }
+
+        // Handle results after both fetches attempt
+        if (fetchError) {
+          setSaveStatus("Error fetching data from Supabase.");
+          // Fallback to defaults for both states on any critical error
+          setTranslations(defaultTranslations);
+          setSiteSettings(defaultSiteSettings);
+        } else {
+          // Set translations state (handle missing content)
+          if (contentData) {
+            setTranslations(prev => ({ ...prev, [TARGET_LANGUAGE]: contentData! }));
+          } else {
+            console.log(`No site content found in Supabase for language '${TARGET_LANGUAGE}', using defaults.`);
+            setTranslations(defaultTranslations);
+            // Optionally trigger save of defaults here if needed
+          }
+
+          // Set site settings state (handle missing settings row)
+          if (settingsData) {
+            setSiteSettings(settingsData);
+          } else {
+            console.log(`No site settings found in Supabase (ID: ${SITE_SETTINGS_ID}), using defaults.`);
+            setSiteSettings(defaultSiteSettings);
+            // Optionally trigger save of default settings here if needed
+            // await saveSiteSettings({ useDefaults: true });
+          }
+        }
+
+      } catch (err: any) { // Catch any unexpected errors during the process
+        console.error(`Unexpected error during data fetch:`, err);
+        setSaveStatus("Error fetching data from Supabase.");
+        setTranslations(defaultTranslations);
+        setSiteSettings(defaultSiteSettings);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchSiteContent();
+    // No cleanup needed for one-time fetch. Add Supabase Realtime subscription here if needed later.
+  }, []); // Empty dependency array ensures this runs only on mount
+
+  // --- Input Handlers ---
+
+  // Existing handler for nested translations object (site_content)
+  const handleTranslationsChange = useCallback((fullPath: (string | number)[], value: string | string[]) => {
     setTranslations((prev: TranslationsType) => {
-      const langToUpdate: LanguageKey = 'en';
-      // Basic validation before calling the 'any' based utility
+      const langToUpdate: LanguageKey = TARGET_LANGUAGE;
       if (!fullPath || fullPath.length === 0) return prev;
       const updatedLangData = updateNestedState(prev[langToUpdate], fullPath, value);
-      return {
-        ...prev,
-        [langToUpdate]: updatedLangData
-      };
+      return { ...prev, [langToUpdate]: updatedLangData };
     });
+    setSaveStatus('');
+  }, []);
+
+  // New handler for flat site settings object
+  const handleSiteSettingChange = useCallback((key: keyof SiteSettingsData, value: string) => {
+    // Ensure 'id' and 'updated_at' are not directly modified by this handler
+    if (key === 'id' || key === 'updated_at') return;
+
+    setSiteSettings(prev => ({
+      ...prev,
+      [key]: value,
+    }));
     setSaveStatus(''); // Clear status on input change
-  }, []); // Removed setSaveStatus from dependencies as it's stable
+  }, []);
 
-  const handleAddNewProject = useCallback(() => {
-    setTranslations((prev: TranslationsType) => {
-      const newProjectKey = `project_${Date.now()}`; // Use a more descriptive prefix
-      const langData = { ...prev.en }; // Shallow copy
-      // Ensure projects section exists and is an object with at least a title
-      if (typeof langData.projects !== 'object' || langData.projects === null) {
-        // Initialize with the default title
-        langData.projects = { title: defaultTranslations.en.projects.title };
-      }
-      // Add the new project using type assertion to allow dynamic key
-      (langData.projects as any)[newProjectKey] = { ...newProjectTemplate };
 
-      return {
-        ...prev,
-        en: langData
-      };
-    });
-    setSaveStatus('New project added. Edit details and save.');
-    // Note: Switching activeTab is handled in the component
-  }, []); // Removed dependencies like activeTab, setActiveTab
+  // --- Save Functions ---
 
-  const handleAddNewService = useCallback(() => {
-    setTranslations((prev: TranslationsType) => {
-      // Ensure prev.en and prev.en.services exist and are objects
-      const currentServices = prev.en?.services;
-      // Default to an empty array if list doesn't exist or isn't an array
-      const currentList = Array.isArray(currentServices?.list) ? currentServices.list : [];
+  // Existing save function for site_content (translations)
+  const saveTranslations = async (options?: { dataToSave?: TranslationsType['en'], useDefaults?: boolean }) => {
+    const dataToSave = options?.dataToSave
+                     ? options.dataToSave
+                     : options?.useDefaults
+                       ? defaultTranslations[TARGET_LANGUAGE]
+                       : translations[TARGET_LANGUAGE];
 
-      // Create a new list with the new item added immutably
-      const newList = [...currentList, { ...newServiceTemplate }];
-
-      // Construct the new 'en' state immutably
-      const newEnState = {
-        ...prev.en, // Copy existing 'en' data
-        services: { // Overwrite 'services' section
-          // Copy existing service properties (like title) or use defaults if services didn't exist
-          ...(currentServices || { title: defaultTranslations.en.services.title || 'Services', list: [] }),
-          list: newList, // Use the new list
-        },
-      };
-
-      return {
-        ...prev, // Copy other languages if any
-        en: newEnState, // Set the updated 'en' state
-      };
-    });
-    setSaveStatus('New service added. Edit details and save.');
-    // Note: Switching activeTab is handled in the component
-  }, []); // Removed dependencies like activeTab, setActiveTab
-
-  // Modified saveChanges to accept options for saving defaults or specific data
-  const saveChanges = async (options?: { dataToSave?: TranslationsType['en'], useDefaults?: boolean }) => {
-    // Determine data source: options.dataToSave > defaultTranslations.en (if useDefaults) > current state (translations.en)
-    const data = options?.dataToSave
-                 ? options.dataToSave
-                 : options?.useDefaults
-                   ? defaultTranslations.en // Use imported defaults if requested
-                   : translations.en;       // Otherwise, use current state
-    if (!db) { // db is Firestore instance
-      setSaveStatus("Error: Firestore connection failed.");
+    if (!supabase) {
+      setSaveStatus("Error: Supabase connection failed.");
+      showToast("Error: Supabase connection failed.", 'error');
       return;
     }
-    setSaveStatus('Saving...');
+    setSaveStatus('Saving translations...');
     try {
-      // Get a reference to the Firestore document and save the 'en' data
-      const translationsDocRef = doc(db, TRANSLATIONS_DOC_PATH);
-      // Revert to using merge: true for general saves
-      await setDoc(translationsDocRef, data, { merge: true });
-      // setSaveStatus('Content changes saved successfully!'); // Replaced by toast
-      showToast('Content changes saved successfully!', 'success');
-      setSaveStatus(''); // Clear any previous status
+      const { error } = await supabase
+        .from(SITE_CONTENT_TABLE)
+        .upsert({ language: TARGET_LANGUAGE, content: dataToSave });
+
+      if (error) throw error;
+
+      showToast('Translation content saved successfully!', 'success');
+      setSaveStatus('');
     } catch (error) {
-      console.error("Failed to save translations to Firestore:", error);
-      // setSaveStatus('Error saving content changes.'); // Replaced by toast
-      showToast('Error saving content changes.', 'error');
-      setSaveStatus(''); // Clear any previous status
-    } finally {
-      // Clear loading status if needed, though setSaveStatus might be enough
-      // setIsLoading(false); // Example if loading state was tied to save
+      console.error("Failed to save site content to Supabase:", error);
+      showToast('Error saving translation content.', 'error');
+      setSaveStatus('');
     }
   };
 
-  // New function to handle specific field deletion using updateDoc and FieldValue.delete()
+  // New save function for site_settings
+  const saveSiteSettings = async (options?: { dataToSave?: SiteSettingsData, useDefaults?: boolean }) => {
+    const settingsToSave = options?.dataToSave
+                         ? options.dataToSave
+                         : options?.useDefaults
+                           ? defaultSiteSettings
+                           : siteSettings;
 
-  // Updated handleDeleteItem to handle array deletions (services) and field deletions (projects)
+    // Ensure the ID is always correct before saving
+    const finalSettings = { ...settingsToSave, id: SITE_SETTINGS_ID };
+    // Remove updated_at before sending, DB handles it
+    delete finalSettings.updated_at;
+
+
+    if (!supabase) {
+      setSaveStatus("Error: Supabase connection failed.");
+      showToast("Error: Supabase connection failed.", 'error');
+      return;
+    }
+    setSaveStatus('Saving site settings...');
+    try {
+      const { error } = await supabase
+        .from(SITE_SETTINGS_TABLE)
+        .upsert(finalSettings); // Upsert the single settings row
+
+      if (error) throw error;
+
+      // Optimistically update local state with potentially new updated_at from DB (or refetch)
+      // For simplicity, we'll just show success for now. Refetching might be better.
+      // const { data: updatedData } = await supabase.from(SITE_SETTINGS_TABLE).select('updated_at').eq('id', SITE_SETTINGS_ID).single();
+      // if (updatedData) setSiteSettings(prev => ({ ...prev, updated_at: updatedData.updated_at }));
+
+      showToast('Site settings saved successfully!', 'success');
+      setSaveStatus('');
+    } catch (error) {
+      console.error("Failed to save site settings to Supabase:", error);
+      showToast('Error saving site settings.', 'error');
+      setSaveStatus('');
+    }
+  };
+
+
+  // --- Deletion and Reset ---
+
+  // handleDeleteItem remains largely unchanged for now, as it didn't handle general info fields
   const handleDeleteItem = useCallback(async (pathToDelete: (string | number)[]) => {
-    if (!pathToDelete || pathToDelete.length < 1) {
-      console.error("Invalid path for deletion:", pathToDelete);
-      showToast('Error: Invalid deletion path.', 'error');
+    // ... (keep existing deletion logic if it handles things other than general info)
+    // For now, this function likely does nothing relevant to site_settings
+    console.warn("handleDeleteItem called, but no specific logic for site_settings implemented yet.", pathToDelete);
+    // Ensure dependencies are correct if logic is added later
+  }, [showToast]); // Add other dependencies like saveTranslations if needed
+
+
+  // Reset function specifically for site_settings
+  const resetSiteSettingsToDefaults = useCallback(async () => {
+    if (!supabase) {
+      setSaveStatus("Error: Supabase connection failed.");
+      showToast("Error: Supabase connection failed.", 'error');
       return;
     }
-
-    // --- Service Item Deletion (Array Element) ---
-    if (pathToDelete[0] === 'services' && pathToDelete[1] === 'list' && typeof pathToDelete[2] === 'number') {
-      const serviceIndexToDelete = pathToDelete[2];
-      const currentServicesList = translations.en.services?.list;
-
-      if (!Array.isArray(currentServicesList)) {
-        console.error("Cannot delete service item: services.list is not an array or is missing.", currentServicesList);
-        showToast('Error: Services data structure issue.', 'error');
-        return;
-      }
-
-      // 1. Optimistic UI Update (Local State)
-      const updatedServicesList = currentServicesList.filter((_, index) => index !== serviceIndexToDelete);
-      setTranslations(prev => ({
-        ...prev,
-        en: {
-          ...prev.en,
-          services: {
-            ...(prev.en.services || { title: '', list: [] }), // Ensure services object exists
-            list: updatedServicesList,
-          },
-        },
-      }));
-
-      // 2. Firestore Update
-      if (!db) {
-        showToast("Error: Firestore connection failed.", 'error');
-        // Optionally revert state change here if needed
-        return;
-      }
-      const translationsDocRef = doc(db, TRANSLATIONS_DOC_PATH);
+    if (window.confirm('Are you sure you want to reset Site Settings (Title, Hero, About, Footer, Contact Info) to their default values? This cannot be undone.')) {
+      setSaveStatus('Resetting site settings...');
       try {
-        setSaveStatus('Deleting service item...'); // Indicate activity
-        await updateDoc(translationsDocRef, {
-          'services.list': updatedServicesList // Update the whole array
-        });
-        showToast('Service item deleted.', 'success');
+        // Use the predefined defaults
+        const settingsToSave = { ...defaultSiteSettings };
+        delete settingsToSave.updated_at; // Don't send updated_at
+
+        const { error } = await supabase
+          .from(SITE_SETTINGS_TABLE)
+          .upsert(settingsToSave); // Upsert the default settings
+
+        if (error) throw error;
+
+        // Optimistically update local state
+        setSiteSettings(defaultSiteSettings);
+        showToast('Site settings reset to defaults.', 'success');
+        setSaveStatus('');
       } catch (error) {
-        console.error("Failed to update services list in Firestore:", error);
-        showToast('Error deleting service item.', 'error');
-        // Optionally revert state change here by refetching or using the previous state
-      } finally {
-        setSaveStatus(''); // Clear activity indicator
-      }
-
-    // --- Project Item Deletion (Object Property) ---
-    } else if (pathToDelete[0] === 'projects' && pathToDelete.length === 2) {
-        const projectKeyToDelete = pathToDelete[1];
-        const fieldPathString = pathToDelete.join('.'); // e.g., "projects.project_123"
-
-        if (typeof projectKeyToDelete !== 'string' || !fieldPathString) {
-           console.error("Invalid project path for deletion:", pathToDelete);
-           showToast('Error: Could not determine project to delete.', 'error');
-           return;
-        }
-
-        // 1. Optimistic UI Update (Local State)
-        setTranslations(prev => {
-            const updatedProjects = { ...prev.en.projects };
-            delete updatedProjects[projectKeyToDelete]; // Remove the property
-            return {
-                ...prev,
-                en: {
-                    ...prev.en,
-                    projects: updatedProjects,
-                },
-            };
-        });
-
-        // 2. Firestore Update (Revised - Avoid deleteField, update whole object)
-        if (!db) {
-            showToast("Error: Firestore connection failed.", 'error');
-            // Attempt to revert optimistic update might be complex, rely on error message for now
-            return;
-        }
-        const translationsDocRef = doc(db, TRANSLATIONS_DOC_PATH);
-        try {
-            setSaveStatus('Deleting project item...'); // Indicate activity
-
-            // Get the projects object from the *current* state (before optimistic update)
-            // Note: This relies on `translations` being available in the useCallback's closure
-            const projectsBeforeDelete = translations.en.projects;
-            const updatedProjectsForFirestore = { ...projectsBeforeDelete };
-            // Ensure the key exists before deleting (optional safety check)
-            if (updatedProjectsForFirestore.hasOwnProperty(projectKeyToDelete)) {
-                delete updatedProjectsForFirestore[projectKeyToDelete]; // Remove the key
-            } else {
-                 console.warn(`Attempted to delete non-existent project key: ${projectKeyToDelete}`);
-                 // Proceeding anyway, Firestore update might resolve inconsistency if key was already gone
-            }
-
-
-            // Update the entire 'projects' field in Firestore
-            await updateDoc(translationsDocRef, {
-                'projects': updatedProjectsForFirestore
-            });
-            // The onSnapshot listener should now receive the correct state.
-            showToast('Project item deleted.', 'success');
-        } catch (error) {
-            console.error("Failed to delete project item from Firestore:", error);
-            showToast('Error deleting project item.', 'error');
-            // If Firestore fails, the optimistic update is still in the local state.
-            // The next snapshot *might* correct it, or a page refresh would.
-            // A full revert here is complex and might fight with the snapshot listener.
-            console.error("Firestore delete failed, local state might be inconsistent until next snapshot/refresh.");
-        } finally {
-            setSaveStatus(''); // Clear activity indicator
-        }
-    } else {
-        // Handle other potential deletion paths or show error
-        console.error("Unhandled deletion path:", pathToDelete);
-        showToast('Error: Deletion logic not implemented for this path.', 'error');
-    }
-
-  // Add translations to dependency array for optimistic updates
-  }, [translations, showToast]); // Include showToast from useNotifications context
-
-
-  const resetToDefaults = async () => {
-     if (!db) { // db is Firestore instance
-      setSaveStatus("Error: Firestore connection failed.");
-      return;
-    }
-    if (window.confirm('Are you sure you want to reset the English text content (About, Contact, Services, General Info) to the default values? This cannot be undone and does not affect Projects, Styles, or Social Links.')) {
-      setSaveStatus('Resetting...');
-      // Prepare the data to be saved: defaults for most, but keep existing projects
-      const dataToSave = {
-        ...defaultTranslations.en, // Start with all defaults
-        projects: translations.en.projects // Overwrite with current projects
-      };
-
-      try {
-        // Get a reference to the Firestore document and overwrite with the reset data
-        const translationsDocRef = doc(db, TRANSLATIONS_DOC_PATH);
-        await setDoc(translationsDocRef, dataToSave); // Overwrite the document
-        // The onSnapshot listener should automatically update the local state
-        // setSaveStatus('Text content sections reset to defaults.'); // Replaced by toast
-        showToast('Text content sections reset to defaults.', 'success');
-        setSaveStatus(''); // Clear status
-      } catch (error) {
-        console.error("Failed to reset translations in Firestore:", error);
-        // setSaveStatus('Error resetting content.'); // Replaced by toast
-        showToast('Error resetting content.', 'error');
-        setSaveStatus(''); // Clear status
+        console.error("Failed to reset site settings in Supabase:", error);
+        showToast('Error resetting site settings.', 'error');
+        setSaveStatus('');
       }
     }
-  };
+  }, [showToast]); // Dependencies: showToast, setSiteSettings, setSaveStatus
+
+  // Existing reset function, now only for site_content (if needed)
+  const resetTranslationsToDefaults = useCallback(async () => {
+     if (!supabase) {
+       setSaveStatus("Error: Supabase connection failed.");
+       showToast("Error: Supabase connection failed.", 'error');
+       return;
+     }
+     // Adjust confirmation message if only specific parts of translations remain
+     if (window.confirm('Are you sure you want to reset remaining text content (e.g., Contact Form Labels) to default values?')) {
+       setSaveStatus('Resetting translations...');
+       // Create a default object *excluding* the fields now in site_settings
+       const defaultContent = { ...defaultTranslations[TARGET_LANGUAGE] };
+       // Explicitly remove fields moved to site_settings
+       delete (defaultContent as any).generalInfo;
+       delete (defaultContent as any).hero;
+       delete (defaultContent as any).about;
+       delete (defaultContent as any).footer;
+       // Be careful with nested UI elements if only some were moved
+       if (defaultContent.ui) {
+         delete (defaultContent.ui as any).phone;
+         delete (defaultContent.ui as any).address;
+         delete (defaultContent.ui as any).mail;
+         // Consider if other ui fields should remain or be removed
+       }
+       // Keep contact form labels, etc.
+
+       await saveTranslations({ dataToSave: defaultContent });
+       // Update local state after save completes (saveTranslations handles toasts)
+       setTranslations(prev => ({ ...prev, [TARGET_LANGUAGE]: defaultContent }));
+     }
+   }, [showToast, saveTranslations]); // Dependencies
+
 
   return {
-    translations,
+    translations, // Still needed for parts not moved to site_settings
+    siteSettings,   // New state for site settings data
     isLoading,
     saveStatus,
-    setSaveStatus, // Expose setter if needed by component
-    setTranslations, // Expose setter if needed by component
-    handleInputChange,
-    handleAddNewProject,
-    handleAddNewService,
-    saveChanges,
-    handleDeleteItem,
-    resetToDefaults,
+    setSaveStatus,
+    setTranslations, // Keep if direct manipulation is needed elsewhere
+    setSiteSettings, // Expose setter for site settings
+    handleTranslationsChange, // Renamed original handler
+    handleSiteSettingChange,  // New handler for site settings
+    saveTranslations, // Renamed original save function
+    saveSiteSettings,   // New save function for site settings
+    handleDeleteItem, // Keep if it handles other deletions
+    resetSiteSettingsToDefaults, // New reset function
+    resetTranslationsToDefaults, // Renamed original reset function
   };
 };

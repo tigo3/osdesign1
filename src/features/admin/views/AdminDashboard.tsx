@@ -2,11 +2,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-// Firebase
-import { signOut } from "firebase/auth";
-import { auth } from '../../../config/firebaseConfig';
+// Supabase
+import supabase from '../../../config/supabaseConfig'; // Import Supabase client
 
-// UI Libraries & Icons
 // UI Libraries & Icons
 import {
   LayoutDashboard, FileEdit, Link2, Settings, FileText, Briefcase, // Added Briefcase
@@ -58,7 +56,7 @@ const AdminDashboard: React.FC = () => {
     const savedState = localStorage.getItem('desktopSidebarCollapsed');
     return savedState ? JSON.parse(savedState) : false;
   });
- 
+
   // Removed showUserMenu state, now managed within TopNavBar
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768); // md breakpoint
 
@@ -88,44 +86,17 @@ const AdminDashboard: React.FC = () => {
   // Use the custom hook for data management
   const {
     translations,
+    siteSettings, // Get the new site settings state
     isLoading,
     saveStatus,
-    handleInputChange,
-    handleAddNewProject,
-    handleAddNewService,
-    saveChanges,
+    handleTranslationsChange, // Use renamed handler
+    handleSiteSettingChange, // Get the new handler
+    saveTranslations, // Use renamed save function
+    saveSiteSettings, // Get the new save function
     handleDeleteItem,
-    // resetToDefaults, // Removed unused variable
+    // resetSiteSettingsToDefaults, // Get reset functions if needed later
+    // resetTranslationsToDefaults,
   } = useAdminData();
-
-  // --- Temporary Effect to Update Firestore Structure ---
-  // This effect runs once on mount to save the default structure to Firestore.
-  // It should be removed after the first successful run.
-  useEffect(() => {
-    const updateFirestoreStructure = async () => {
-      console.log("Attempting to update Firestore structure with defaults...");
-      // Use a confirmation prompt before overwriting Firestore data
-      if (window.confirm("Update Firestore 'translations/en' document with the current default structure? This will add missing sections like 'hero' and 'footer'. Existing data in those sections will be overwritten if they exist.")) {
-        await saveChanges({ useDefaults: true });
-        alert("Firestore structure update initiated. Check console/toast for status."); // Provide feedback
-      } else {
-        console.log("Firestore structure update cancelled by user.");
-      }
-    };
-    // Check if this update has already been performed (using localStorage flag)
-    const structureUpdated = localStorage.getItem('firestoreStructureUpdated_v1'); // Use a versioned key
-    if (!structureUpdated) {
-      updateFirestoreStructure().then(() => {
-        // Set flag in localStorage after attempting the update
-        localStorage.setItem('firestoreStructureUpdated_v1', 'true');
-      });
-    } else {
-      console.log("Firestore structure update already performed.");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Empty dependency array ensures this runs only once on mount
-  // --- End Temporary Effect ---
-
 
   // Local UI state
   const [activeTab, setActiveTab] = useState<string | null>('dashboard'); // Default to dashboard
@@ -135,21 +106,21 @@ const AdminDashboard: React.FC = () => {
 
   // Logout handler
   const handleLogout = async () => {
-    // setLogoutError(''); // Removed unused state setter
-    if (!auth) {
-      console.error("Firebase auth instance is not available.");
-      // setLogoutError('Logout service unavailable. Please try again later.'); // Removed unused state setter
-      // Optionally, display an alert or console log here if needed
+    if (!supabase) {
+      console.error("Supabase client instance is not available.");
       alert('Logout service unavailable. Please try again later.');
       return;
     }
     try {
-      await signOut(auth);
-      navigate('/admin/login');
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        throw error; // Throw the error to be caught by the catch block
+      }
+      // Navigation is handled by the onAuthStateChange listener in ProtectedRoute/LoginPage
+      // but we can navigate explicitly here as well for immediate feedback.
+      navigate('/admin/login', { replace: true });
     } catch (error) {
-      console.error("Logout failed:", error);
-      // setLogoutError('Failed to log out. Please try again.'); // Removed unused state setter
-      // Optionally, display an alert or console log here if needed
+      console.error("Supabase logout failed:", error);
       alert('Failed to log out. Please try again.');
     }
   };
@@ -157,6 +128,9 @@ const AdminDashboard: React.FC = () => {
 
   // Removed renderDashboardContent and renderActiveTabContent functions
   // Their logic is now handled by TabContentRenderer
+
+  // Calculate button disabled state
+  const isSaveDisabled = isLoading || saveStatus.includes('Saving');
 
   return (
     // Removed NotificationProvider wrapper
@@ -213,13 +187,15 @@ const AdminDashboard: React.FC = () => {
               <TabContentRenderer
                 activeTab={activeTab}
                 isLoading={isLoading}
+                // Pass both data sources and handlers
                 translations={translations}
+                siteSettings={siteSettings}
                 editingPath={editingPath}
                 setEditingPath={setEditingPath}
-                handleInputChange={handleInputChange}
-                handleAddNewProject={handleAddNewProject}
-                handleAddNewService={handleAddNewService}
+                handleTranslationsChange={handleTranslationsChange}
+                handleSiteSettingChange={handleSiteSettingChange}
                 handleDeleteItem={handleDeleteItem}
+                // Pass other props as needed by TabContentRenderer's children
               />
             </div>
 
@@ -227,12 +203,16 @@ const AdminDashboard: React.FC = () => {
             {activeTab && activeTab !== 'styleEditor' && activeTab !== 'socialLinks' && activeTab !== 'pages' && (
               <div className="mt-6 flex justify-end items-center gap-4">
                 {saveStatus && (
-                  <span className="text-green-600 text-sm">{saveStatus}</span>
+                  <span className="text-sm text-gray-600">{saveStatus}</span> /* Display status */
                 )}
                 <button
-                  onClick={() => saveChanges()}
+                  // Call both save functions. Consider making this conditional later.
+                  onClick={async () => {
+                    await saveSiteSettings();
+                    await saveTranslations();
+                  }}
                   className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg transition-colors"
-                  disabled={isLoading}
+                  disabled={isSaveDisabled} // Use the calculated variable
                 >
                   Save Changes
                 </button>

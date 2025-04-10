@@ -1,16 +1,70 @@
-import React, { useEffect } from 'react'; // Removed useState import
-import { Link, useLocation } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { Link, useParams, useLocation } from 'react-router-dom';
+import supabase from '../config/supabaseConfig'; // Import Supabase client
 import { Page } from '../features/admin/sections/Pages/types'; // Import the Page type
 import 'react-quill/dist/quill.snow.css'; // Import Quill styles to apply formatting
-import { useTranslations } from '../hooks/useTranslations'; // Added useTranslations import
+import { useTranslations } from '../hooks/useTranslations';
 
-// Simple component to render dynamic page content
-const DynamicPage: React.FC<{ page: Page | undefined }> = ({ page }) => {
-  const location = useLocation(); // Get location to show if page not found
-  const { t, isLoading: isLoadingTranslations, error: translationsError } = useTranslations('en'); // Added translations hook
-  // Removed isAdminLinkVisible state
+const PAGES_TABLE = 'pages';
 
-  // Removed admin link visibility toggle useEffect
+// Component to render dynamic page content fetched by slug
+const DynamicPage: React.FC = () => {
+  const { slug } = useParams<{ slug: string }>(); // Get slug from URL params
+  const location = useLocation();
+  const [page, setPage] = useState<Page | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const { t, isLoading: isLoadingTranslations, error: translationsError } = useTranslations('en'); // Keep translations for footer etc.
+
+  useEffect(() => {
+    const fetchPage = async () => {
+      if (!slug) {
+        setError("No page slug provided.");
+        setIsLoading(false);
+        return;
+      }
+      if (!supabase) {
+        setError("Supabase client not available.");
+        setIsLoading(false);
+        return;
+      }
+
+      setIsLoading(true);
+      setError(null);
+      try {
+        const { data, error: dbError } = await supabase
+          .from(PAGES_TABLE)
+          .select('*')
+          .eq('slug', slug)
+          .eq('is_published', true) // Ensure only published pages are fetched
+          .single(); // Expect only one page per slug
+
+        if (dbError) {
+          // Handle case where the page is not found or not published
+          if (dbError.code === 'PGRST116') { // PostgREST code for "Not Found"
+            setError(`Page not found or not published: ${slug}`);
+            setPage(null); // Ensure page state is null
+          } else {
+            throw dbError; // Throw other Supabase errors
+          }
+        } else if (data) {
+          setPage(data as Page);
+        } else {
+          // Should be covered by PGRST116, but handle just in case
+          setError(`Page not found: ${slug}`);
+          setPage(null);
+        }
+      } catch (err: any) {
+        console.error("Error fetching dynamic page:", err);
+        setError(`Failed to load page: ${err.message}`);
+        setPage(null);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchPage();
+  }, [slug]); // Re-fetch if slug changes
 
   // Log translation errors if any
   useEffect(() => {
@@ -19,26 +73,29 @@ const DynamicPage: React.FC<{ page: Page | undefined }> = ({ page }) => {
     }
   }, [translationsError]);
 
-  if (!page) {
+  // Loading state for page fetch
+  if (isLoading) {
+    return <div className="flex items-center justify-center min-h-screen bg-gray-900"><div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500"></div></div>;
+  }
+
+  // Error state or Page Not Found
+  if (error || !page) {
     return (
-      <div className="container mx-auto px-4 py-16 text-center text-text  min-h-screen flex flex-col items-center justify-center">
+      <div className="container mx-auto px-4 py-16 text-center text-text min-h-screen flex flex-col items-center justify-center">
         <h1 className="text-4xl font-bold mb-4">Page Not Found</h1>
-        <p className="text-xl">The page you requested ({location.pathname}) could not be found.</p>
-        <Link to="/" className="mt-6 inline-block  hover:bg-secondary text-text font-bold py-2 px-4 ">
+        <p className="text-xl mb-4">The page you requested ({location.pathname}) could not be found or is not available.</p>
+        {error && <p className="text-red-500 text-sm mb-4">({error})</p>} {/* Optionally show error detail */}
+        <Link to="/" className="mt-6 inline-block bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
           Go Home
         </Link>
       </div>
     );
   }
 
-  // Use isLoading state from the hook
-  if (isLoadingTranslations) {
-    return <div className="flex items-center justify-center min-h-screen bg-gray-900"><div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500"></div></div>;
-  }
-  // Optionally handle translationsError state here, e.g., show an error message
+  // Loading state for translations (less critical, maybe show page content anyway)
+  // if (isLoadingTranslations) { ... }
 
-  // Basic rendering - consider using Markdown or HTML renderer based on content type
-  // Apply base styles and ensure content area has min-height
+  // Render the fetched page content
   return (
     // Modified flex container to push footer down
     <div
@@ -62,11 +119,7 @@ const DynamicPage: React.FC<{ page: Page | undefined }> = ({ page }) => {
         {/* Alternative for plain text: <p className="text-lg leading-relaxed text-text">{page.content}</p> */}
         {/* Removed the old text link from the bottom */}
       </div>
-      {/* Footer updated: Removed Admin Dashboard link */}
-      <footer className="container mx-auto px-4 py-8 text-center"> {/* Removed relative positioning */}
-        <p className="text-secondary mb-4">{t.generalInfo.footerText}</p>
-        {/* Removed Admin Dashboard Link component */}
-      </footer>
+      {/* Footer removed as copyright is handled in MainSite via SiteSettingsContext */}
     </div>
   );
 };

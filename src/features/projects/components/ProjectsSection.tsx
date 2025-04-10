@@ -1,74 +1,76 @@
 import React from 'react';
-import { ExternalLink, Code2 } from 'lucide-react';
-
-interface Project {
-  title: string;
-  description: string;
-  tags: string[];
-  link: string; // Changed from githubLink and liveLink
-}
+import { ExternalLink, Code2, Github } from 'lucide-react'; // Added Github icon
+import { Project } from '../../admin/sections/Projects/types'; // Import the correct Project type
 
 interface ProjectsSectionProps {
   projects: Project[];
   title: string;
+  isDarkMode?: boolean; // Optional dark mode prop for styling consistency
 }
 
-const ProjectsSection: React.FC<ProjectsSectionProps> = ({ projects, title }) => {
+const ProjectsSection: React.FC<ProjectsSectionProps> = ({ projects, title, isDarkMode }) => {
   return (
-    // Added shadow-xl, rounded-lg, and background color using the unified CSS variable
-    <section id='projects'
-      className="container mx-auto px-4 py-16 shadow-xl"
-     // Removed inline style/variable reference for background, handled by Tailwind theme
-    >
-      <h2 className="text-3xl font-bold text-center mb-12 text-title">
-        {/* Removed inline style: color: 'var(--title-color)' */}
-        {title}
-      </h2>
-      <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto"  > 
-        {projects.map((project, index) => {
-          const ProjectContent = (
-            <>
-              <div className="flex justify-between items-start mb-4 ">
-                <Code2 className="text-primary" size={24} />
-                {/* Link icon if link exists */}
-                {project.link && (
-                  <ExternalLink size={20} className="text-gray-500 "  />
-                )}
-              </div>
-              <h3 className="text-xl font-semibold mb-2 text-h3title">
-                {/* Removed inline style: color: 'var(--h3title-color)' */}
-                {project.title}
-              </h3>
-              <p className="text-text" >
-                {/* Removed redundant text-gray-400 */}
-                {project.description}
-              </p>
-              <div className="mt-4 flex flex-wrap gap-2">
-                {project.tags.map((tag, tagIndex) => (
-                  <span key={tagIndex} className="px-3 py-1 rounded-full text-sm bg-primary text-text">{tag}</span>
-                ))}
-              </div>
-            </>
-          );
-
-          return project.link ? (
-            <a 
-              key={index} 
-              href={project.link}
-              target="_blank"
-              rel="noopener noreferrer"
-              // Added base shadow-lg and sectionbg class
-              className="block  p-6 shadow-lg hover:bg-gray-700 transition-colors hover:shadow-xl bg-section" // Replaced sectionbg with bg-section
+    <section id='projects' className={`py-16 ${isDarkMode ? 'bg-gray-800' : 'bg-gray-50'}`}>
+      <div className="container mx-auto px-4">
+        <h2 className={`text-3xl font-bold text-center mb-12 ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+          {title}
+        </h2>
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-6xl mx-auto">
+          {projects.map((project) => (
+            <div
+              key={project.id}
+              className={`rounded-lg shadow-lg overflow-hidden transition-shadow duration-300 hover:shadow-xl ${isDarkMode ? 'bg-gray-700' : 'bg-white'}`}
             >
-              {ProjectContent}
-            </a>
-          ) : (
-             // Added shadow-lg
-            <div key={index} className=" p-6 shadow-lg bg-section" >
-              {ProjectContent}
+              {project.image_url && (
+                <img src={project.image_url} alt={project.title} className="w-full h-48 object-cover" />
+              )}
+              <div className="p-6">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className={`text-xl font-semibold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>
+                    {project.title}
+                  </h3>
+                  <div className="flex space-x-3">
+                    {project.repo_url && (
+                      <a
+                        href={project.repo_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={`${project.title} Repository`}
+                        className={`hover:text-blue-400 transition-colors ${isDarkMode ? 'text-gray-300' : 'text-gray-500'}`}
+                      >
+                        <Github size={20} />
+                      </a>
+                    )}
+                    {project.live_url && (
+                      <a
+                        href={project.live_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={`${project.title} Live Demo`}
+                        className={`hover:text-blue-400 transition-colors ${isDarkMode ? 'text-gray-300' : 'text-gray-500'}`}
+                      >
+                        <ExternalLink size={20} />
+                      </a>
+                    )}
+                  </div>
+                </div>
+                <p className={`mb-4 ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                  {project.description || 'No description provided.'}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {project.tags?.map((tag, tagIndex) => (
+                    <span
+                      key={tagIndex}
+                      className={`px-3 py-1 rounded-full text-xs font-medium ${isDarkMode ? 'bg-blue-500 text-white' : 'bg-blue-100 text-blue-800'}`}
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              </div>
             </div>
-          );
-        })}
+          ))}
+        </div>
       </div>
     </section>
   );

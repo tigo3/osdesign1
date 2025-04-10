@@ -4,5 +4,6 @@ export interface Page {
   title: string;
   slug: string; // URL-friendly identifier
   content: string; // Page content (e.g., Markdown, HTML)
-  order: number; // Add order field
+  order?: number; // Make order optional as we sort by created_at now
+  is_published?: boolean; // Add is_published if it's part of the page data model
 }
