@@ -157,7 +157,7 @@ function MainSite() {
                   {/* Example: Display full title or split if needed */}
                   <span className="block">{heroData?.title}</span>
                   {/* Conditionally render title2 using 'in' operator for better type narrowing */}
-                  {heroData && 'title2' in heroData && heroData.title2 && <span className="block">{heroData.title2}</span>}
+                  {heroData && 'title2' in heroData && heroData.title2 && <span className="block text-blue-600">{heroData.title2}</span>}
                   {/* <span className={`block ${isDarkMode ? 'text-blue-400' : 'text-blue-600'}`}>{heroData?.title.split(' ').slice(-2).join(' ')}</span> */}
                 </h1>
                 <p className="mt-3 text-base sm:mt-5 sm:text-lg sm:max-w-xl sm:mx-auto md:mt-5 md:text-xl lg:mx-0">

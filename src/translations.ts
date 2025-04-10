@@ -85,7 +85,8 @@ const translations = {
       logoUrl: "/placeholder-logo.png",
     },
     hero: { // Added structure
-      title: "Förvandla din Digitala närvaro", // Combined from parts
+      title: "Förvandla din", 
+      title2: "Digitala närvaro", // Combined from parts
       subtitle: "Vi hjälper företag att växa genom att skapa exceptionella digitala upplevelser...", // Moved from heroDescription
     },
     about: { // Added structure
@@ -141,7 +142,8 @@ const translations = {
       logoUrl: "/placeholder-logo.png",
     },
     hero: { // Added structure
-      title: "حول وجودك الرقمي", // Combined from parts
+      title: "حول", // Combined from parts
+      title2: "وجودك الرقمي", // Combined from parts
       subtitle: "نساعد الشركات على النمو من خلال إنشاء تجارب رقمية استثنائية...", // Moved from heroDescription
     },
     about: { // Added structure
