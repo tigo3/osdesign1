@@ -1,4 +1,4 @@
-# OS Design v1
+# OS Design 
 
 ## 🚀 About the Project
 OS Design v1 is a modern and stylish web design project, built with Tailwind CSS and powered by GitHub. Created with efficiency and flexibility in mind, it leverages [Bolt](https://bolt.new/) for fast and easy web development.
